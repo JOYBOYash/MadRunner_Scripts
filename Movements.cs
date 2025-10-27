@@ -1,7 +1,7 @@
 using UnityEngine;
 
 [RequireComponent(typeof(CharacterController))]
-public class PlayerMovementController : MonoBehaviour
+public class PlayerController : MonoBehaviour
 {
     [Header("References")]
     public PlayerInputHandler input;
@@ -56,7 +56,7 @@ public class PlayerMovementController : MonoBehaviour
         // ✅ Step 1: Get joystick input
         Vector2 moveInput = input.moveInput; // make sure your PlayerInputHandler exposes this as Vector2
 
-        if (moveInput.magnitude < inputDeadzone)
+        if ((moveInput.magnitude) < inputDeadzone)
         {
             moveInput = Vector2.zero;
         }
@@ -106,10 +106,10 @@ public class PlayerMovementController : MonoBehaviour
         controller.Move(forwardMove * Time.deltaTime);
 
         // ✅ Step 6: Update animations
-        if (animatorController != null && animatorController.animator != null)
-        {
-            animatorController.animator.SetFloat("Speed", currentSpeed);
-        }
+        // if (animatorController != null && animatorController.animator != null)
+        // {
+        //     animatorController.animator.SetFloat("Speed", currentSpeed);
+        // }
     }
 
     void HandleActions()

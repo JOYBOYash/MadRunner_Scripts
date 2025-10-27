@@ -16,5 +16,5 @@ MonoBehaviour:
   speedMultiplier: 0.05
   maxSpeed: 25
   rotationSmoothness: 10
-  maxRotationSpeed: 100
+  maxRotationSpeed: 60
   gravity: 9.8
