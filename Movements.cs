@@ -6,73 +6,110 @@ public class PlayerMovementController : MonoBehaviour
     [Header("References")]
     public PlayerInputHandler input;
     public PlayerAnimationController animatorController;
-
-    [Header("Movement Settings")]
-    public float moveSpeed = 6f;
-    public float rotationSpeed = 120f;
-    public float gravity = 9.8f;
+    public PlayerMovementConfig config; // ScriptableObject config
+    public Transform cameraTransform;   // Assign your main camera here
 
     [Header("Movement Mode")]
-    public bool useLocalAxis = true;   // ✅ Toggle between local/global axis
-    [Tooltip("If true, character moves based on its facing direction (local axis). If false, uses world axes.")]
+    public bool useCameraRelativeMovement = true; // toggles between world and camera-relative
+
+    [Header("Rotation / Input")]
+    public float inputDeadzone = 0.15f;
 
     private CharacterController controller;
+    private float currentSpeed;
+    private float speedTimer = 0f;
+
     private Vector3 moveDirection;
+    private Vector3 targetDirection;
 
     void Start()
     {
         controller = GetComponent<CharacterController>();
+
+        if (config == null)
+        {
+            Debug.LogError("❌ PlayerMovementConfig not assigned!");
+            enabled = false;
+            return;
+        }
+
+        if (cameraTransform == null && Camera.main != null)
+            cameraTransform = Camera.main.transform;
+
+        currentSpeed = config.baseSpeed;
     }
 
     void Update()
     {
         if (input == null)
         {
-            Debug.LogWarning("No PlayerInputHandler assigned!");
+            Debug.LogWarning("⚠ No PlayerInputHandler assigned!");
             return;
         }
 
-        HandleRotation();
-        HandleMovement();
+        HandleMovementAndRotation();
         HandleActions();
     }
 
-    void HandleRotation()
+    void HandleMovementAndRotation()
     {
-        // Only rotate character when in Local Axis mode
-        if (useLocalAxis)
+        // ✅ Step 1: Get joystick input
+        Vector2 moveInput = input.moveInput; // make sure your PlayerInputHandler exposes this as Vector2
+
+        if (moveInput.magnitude < inputDeadzone)
         {
-            float rotationAmount = input.rotationInput * rotationSpeed * Time.deltaTime;
-            transform.Rotate(Vector3.up * rotationAmount);
+            moveInput = Vector2.zero;
         }
-    }
 
-    void HandleMovement()
-    {
-        Vector3 desiredDirection;
-
-        if (useLocalAxis)
+        // ✅ Step 2: Build camera-relative direction
+        if (useCameraRelativeMovement && cameraTransform != null)
         {
-            // 🧭 Local: Move relative to where the player faces
-            desiredDirection = transform.forward;
+            Vector3 camForward = cameraTransform.forward;
+            Vector3 camRight = cameraTransform.right;
+
+            // Flatten to ground plane (no tilt)
+            camForward.y = 0f;
+            camRight.y = 0f;
+            camForward.Normalize();
+            camRight.Normalize();
+
+            targetDirection = (camForward * moveInput.y + camRight * moveInput.x).normalized;
         }
         else
         {
-            // 🌍 Global: Always move in +Z world direction (forward) but allow turning via input
-            desiredDirection = Vector3.forward;
-
-            // Allow strafing and backward motion in global mode using rotationInput
-            desiredDirection += new Vector3(input.rotationInput, 0f, 0f);
+            // World-space movement (no camera influence)
+            targetDirection = new Vector3(moveInput.x, 0f, moveInput.y).normalized;
         }
 
-        desiredDirection.Normalize();
-        moveDirection = desiredDirection * moveSpeed;
+        // ✅ Step 3: Rotate player toward target direction
+        if (targetDirection.magnitude > 0.1f)
+        {
+            Quaternion targetRotation = Quaternion.LookRotation(targetDirection, Vector3.up);
+            transform.rotation = Quaternion.Slerp(
+                transform.rotation,
+                targetRotation,
+                config.rotationSmoothness * Time.deltaTime
+            );
+        }
 
-        // Keep player grounded
+        // ✅ Step 4: Gradually increase player’s forward speed over time
+        speedTimer += Time.deltaTime;
+        currentSpeed = Mathf.Min(config.baseSpeed + speedTimer * config.speedMultiplier, config.maxSpeed);
+
+        // ✅ Step 5: Move player forward continuously
+        Vector3 forwardMove = transform.forward * currentSpeed;
+
+        // Apply gravity
         if (!controller.isGrounded)
-            moveDirection.y -= gravity * Time.deltaTime;
+            forwardMove.y -= config.gravity * Time.deltaTime;
 
-        controller.Move(moveDirection * Time.deltaTime);
+        controller.Move(forwardMove * Time.deltaTime);
+
+        // ✅ Step 6: Update animations
+        if (animatorController != null && animatorController.animator != null)
+        {
+            animatorController.animator.SetFloat("Speed", currentSpeed);
+        }
     }
 
     void HandleActions()
@@ -80,14 +117,14 @@ public class PlayerMovementController : MonoBehaviour
         if (input.dashPressed)
         {
             animatorController.TriggerDash();
-            FindObjectOfType<SmoothCameraFollow>()?.TriggerCinematicEffect();
+            FindFirstObjectByType<SmoothCameraFollow>()?.TriggerCinematicEffect();
             input.dashPressed = false;
         }
 
         if (input.slidePressed)
         {
             animatorController.TriggerSlide();
-            FindObjectOfType<SmoothCameraFollow>()?.TriggerCinematicEffect();
+            FindFirstObjectByType<SmoothCameraFollow>()?.TriggerCinematicEffect();
             input.slidePressed = false;
         }
     }

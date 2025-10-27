@@ -4,22 +4,26 @@ using UnityEngine.UI;
 public class PlayerInputHandler : MonoBehaviour
 {
     [Header("References")]
-    public Joystick joystick;         // Assign mobile joystick
+    public Joystick joystick;         // 🎮 Assign mobile joystick
     public Button dashButton;         // UI button for dash
     public Button slideButton;        // UI button for slide
 
     [Header("Keyboard Bindings")]
-    public KeyCode rotateLeftKey = KeyCode.A;
-    public KeyCode rotateRightKey = KeyCode.D;
+    public KeyCode moveForwardKey = KeyCode.W;
+    public KeyCode moveBackwardKey = KeyCode.S;
+    public KeyCode moveLeftKey = KeyCode.A;
+    public KeyCode moveRightKey = KeyCode.D;
     public KeyCode dashKey = KeyCode.X;
     public KeyCode slideKey = KeyCode.Z;
 
-    [HideInInspector] public float rotationInput;
+    // 📦 Outputs consumed by movement controller
+    [HideInInspector] public Vector2 moveInput; // (x = horizontal, y = vertical)
     [HideInInspector] public bool dashPressed;
     [HideInInspector] public bool slidePressed;
 
     void Start()
     {
+        // Hook up UI buttons
         if (dashButton != null)
             dashButton.onClick.AddListener(() => dashPressed = true);
 
@@ -29,19 +33,29 @@ public class PlayerInputHandler : MonoBehaviour
 
     void Update()
     {
-        // Rotation input (from joystick or keyboard)
+        // ✅ Joystick-based movement
         if (joystick != null)
-            rotationInput = joystick.Horizontal;
+        {
+            moveInput = new Vector2(joystick.Horizontal, joystick.Vertical);
+        }
         else
         {
-            rotationInput = 0f;
-            if (Input.GetKey(rotateLeftKey)) rotationInput = -1f;
-            if (Input.GetKey(rotateRightKey)) rotationInput = 1f;
+            // ✅ Keyboard fallback (WASD)
+            float x = 0f;
+            float y = 0f;
+
+            if (Input.GetKey(moveLeftKey)) x = -1f;
+            if (Input.GetKey(moveRightKey)) x = 1f;
+            if (Input.GetKey(moveForwardKey)) y = 1f;
+            if (Input.GetKey(moveBackwardKey)) y = -1f;
+
+            moveInput = new Vector2(x, y).normalized;
         }
 
-        // Dash & Slide keys
+        // ✅ Dash & Slide (keyboard)
         if (Input.GetKeyDown(dashKey))
             dashPressed = true;
+
         if (Input.GetKeyDown(slideKey))
             slidePressed = true;
     }
