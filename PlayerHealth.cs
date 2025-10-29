@@ -10,6 +10,12 @@ public class PlayerHealth : MonoBehaviour
     public ScoreDataSO scoreData;
     public GameOverUIManager gameOverUIManager;  // Link this in Inspector
 
+    public PlayerController playerController; // Reference to the player movement script
+
+    public Animator animator; // Reference to the Animator component
+
+    public ScoreTracker scoreManager;
+
     private bool isDead = false;
     private Rigidbody rb;
 
@@ -49,6 +55,8 @@ public class PlayerHealth : MonoBehaviour
             scoreData.isNewHighScore = false;
         }
 
+    
+
         // Show Game Over UI
         if (gameOverUIManager != null)
             gameOverUIManager.ShowGameOver();
@@ -61,11 +69,20 @@ public class PlayerHealth : MonoBehaviour
             rb.isKinematic = true;  // Optional: Prevents further physics interactions
         }
 
-        PlayerController playerController = GetComponent<PlayerController>();
+
+        animator.SetTrigger("Dies");
+
+
         if (playerController != null)
         {
             playerController.enabled = false;
         }
+
+         if (scoreManager != null)
+        {
+            scoreManager.enabled = false;
+        }
+
 
         // Optional: Disable any other movement-related scripts (e.g., if you have multiple)
         // Example: GetComponent<AnotherMovementScript>()?.enabled = false;
@@ -82,10 +99,20 @@ public class PlayerHealth : MonoBehaviour
             rb.isKinematic = false;  // Restore physics if set to kinematic
         }
 
-        PlayerController playerController = GetComponent<PlayerController>();
+         animator.SetTrigger("Revives");
+
+
         if (playerController != null)
         {
             playerController.enabled = true;
         }
+        
+
+           if (scoreManager != null)
+        {
+            scoreManager.enabled = true;
+        }
+
+
     }
 }

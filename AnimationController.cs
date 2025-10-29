@@ -19,4 +19,5 @@ public class PlayerAnimationController : MonoBehaviour
     {
         animator.SetTrigger("Slides");
     }
+
 }

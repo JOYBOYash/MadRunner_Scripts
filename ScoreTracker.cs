@@ -1,7 +1,7 @@
 using UnityEngine;
 using TMPro;
 
-public class PlayerDistanceTracker : MonoBehaviour
+public class ScoreTracker : MonoBehaviour
 {
     [Header("References")]
     public Transform player;
@@ -94,4 +94,7 @@ public class PlayerDistanceTracker : MonoBehaviour
         isPopping = true;
         Debug.Log($"🎉 Milestone reached: {lastMilestone * milestoneStep} m!");
     }
+
+
+
 }
