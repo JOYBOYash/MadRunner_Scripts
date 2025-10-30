@@ -1,98 +1,94 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-public class DungeonMazeSpawner_3D : MonoBehaviour
+public class PerfectMaze3D : MonoBehaviour
 {
     [Header("Maze Settings")]
-    [Tooltip("Width and height must be odd numbers for proper maze generation.")]
-    public int width = 21;
-    public int height = 21;
+    public int width = 15;
+    public int height = 15;
     public float cellSize = 3f;
 
     [Header("Prefabs")]
     public GameObject wallPrefab;
     public GameObject floorPrefab;
-    public GameObject exitPrefab;
+    public GameObject playerPrefab;
 
-    [Header("Trap Wall Settings")]
-    [Tooltip("List of trap wall prefabs — each can have its own unique behavior script.")]
+    [Header("Random Trap Wall Prefabs (Optional)")]
     public GameObject[] trapWallPrefabs;
+    [Range(0f, 1f)] public float trapWallChance = 0.1f;
 
-    [Range(0f, 0.3f)]
-    public float trapWallChance = 0.12f; // 12% of walls become traps
+    private Cell[,] grid;
+    private System.Random rng = new System.Random();
 
-    [Header("Positioning")]
-    public Vector3 origin = Vector3.zero;
-    public float wallHeightOffset = 1f;
-
-    private int[,] mazeGrid; // 0 = path, 1 = wall
-    private System.Random rng;
+    private class Cell
+    {
+        public bool visited = false;
+        public bool wallN = true, wallS = true, wallE = true, wallW = true;
+    }
 
     void Start()
     {
         GenerateMaze();
         BuildMaze();
-        SpawnExit();
+        BuildFloor();
+        SpawnPlayer();
     }
 
-    // ---------------------- MAZE GENERATION ---------------------- //
+    // ---------------- MAZE GENERATION ----------------
     void GenerateMaze()
     {
-        rng = new System.Random();
-        mazeGrid = new int[width, height];
-
-        // Fill everything as walls
+        grid = new Cell[width, height];
         for (int x = 0; x < width; x++)
-            for (int z = 0; z < height; z++)
-                mazeGrid[x, z] = 1;
+            for (int y = 0; y < height; y++)
+                grid[x, y] = new Cell();
 
-        // Start point (odd cells)
-        int startX = rng.Next(width / 2) * 2 + 1;
-        int startZ = rng.Next(height / 2) * 2 + 1;
-        CarvePath(startX, startZ);
-    }
+        Vector2Int current = new Vector2Int(rng.Next(width), rng.Next(height));
+        Stack<Vector2Int> stack = new Stack<Vector2Int>();
+        grid[current.x, current.y].visited = true;
+        stack.Push(current);
 
-    void CarvePath(int x, int z)
-    {
-        mazeGrid[x, z] = 0;
-
-        List<Vector2Int> directions = new List<Vector2Int>
-        {
-            new Vector2Int(0, 2),
-            new Vector2Int(0, -2),
-            new Vector2Int(2, 0),
-            new Vector2Int(-2, 0)
+        Vector2Int[] directions = {
+            new Vector2Int(0, 1),   // North
+            new Vector2Int(1, 0),   // East
+            new Vector2Int(0, -1),  // South
+            new Vector2Int(-1, 0)   // West
         };
-        Shuffle(directions);
 
-        foreach (var dir in directions)
+        while (stack.Count > 0)
         {
-            int newX = x + dir.x;
-            int newZ = z + dir.y;
+            current = stack.Peek();
+            List<Vector2Int> unvisitedNeighbours = new List<Vector2Int>();
 
-            if (IsInBounds(newX, newZ) && mazeGrid[newX, newZ] == 1)
+            foreach (var dir in directions)
             {
-                mazeGrid[x + dir.x / 2, z + dir.y / 2] = 0;
-                CarvePath(newX, newZ);
+                int nx = current.x + dir.x;
+                int ny = current.y + dir.y;
+                if (nx >= 0 && ny >= 0 && nx < width && ny < height && !grid[nx, ny].visited)
+                    unvisitedNeighbours.Add(dir);
             }
+
+            if (unvisitedNeighbours.Count == 0)
+            {
+                stack.Pop();
+                continue;
+            }
+
+            Vector2Int chosenDir = unvisitedNeighbours[rng.Next(unvisitedNeighbours.Count)];
+            int newX = current.x + chosenDir.x;
+            int newY = current.y + chosenDir.y;
+
+            // Remove walls between cells
+            if (chosenDir.x == 1) { grid[current.x, current.y].wallE = false; grid[newX, newY].wallW = false; }
+            if (chosenDir.x == -1) { grid[current.x, current.y].wallW = false; grid[newX, newY].wallE = false; }
+            if (chosenDir.y == 1) { grid[current.x, current.y].wallN = false; grid[newX, newY].wallS = false; }
+            if (chosenDir.y == -1) { grid[current.x, current.y].wallS = false; grid[newX, newY].wallN = false; }
+
+            grid[newX, newY].visited = true;
+            stack.Push(new Vector2Int(newX, newY));
         }
     }
 
-    bool IsInBounds(int x, int z)
-    {
-        return x > 0 && x < width - 1 && z > 0 && z < height - 1;
-    }
-
-    void Shuffle(List<Vector2Int> list)
-    {
-        for (int i = 0; i < list.Count; i++)
-        {
-            int randIndex = rng.Next(i, list.Count);
-            (list[i], list[randIndex]) = (list[randIndex], list[i]);
-        }
-    }
-
-    // ---------------------- MAZE BUILDING ---------------------- //
+    // ---------------- MAZE BUILD ----------------
     void BuildMaze()
     {
         Transform mazeParent = new GameObject("Generated_Maze").transform;
@@ -100,75 +96,86 @@ public class DungeonMazeSpawner_3D : MonoBehaviour
 
         for (int x = 0; x < width; x++)
         {
-            for (int z = 0; z < height; z++)
+            for (int y = 0; y < height; y++)
             {
-                Vector3 pos = origin + new Vector3(x * cellSize, 0, z * cellSize);
+                Vector3 cellPos = new Vector3(x * cellSize, 0, y * cellSize);
 
-                // Always spawn floor
-                if (floorPrefab)
-                    Instantiate(floorPrefab, pos, Quaternion.identity, mazeParent);
+                // North Wall
+                if (grid[x, y].wallN)
+                    SpawnWall(cellPos + new Vector3(0, 0, cellSize / 2f), Quaternion.identity, mazeParent);
 
-                // Spawn wall
-                if (mazeGrid[x, z] == 1 && wallPrefab)
-                {
-                    Vector3 wallPos = pos + new Vector3(0, wallHeightOffset, 0);
+                // South Wall
+                if (grid[x, y].wallS)
+                    SpawnWall(cellPos + new Vector3(0, 0, -cellSize / 2f), Quaternion.identity, mazeParent);
 
-                    // Don’t turn outer walls into traps
-                    if (x > 1 && x < width - 2 && z > 1 && z < height - 2)
-                    {
-                        if (trapWallPrefabs.Length > 0 && Random.value < trapWallChance)
-                        {
-                            // Randomly select trap type prefab
-                            int trapIndex = rng.Next(trapWallPrefabs.Length);
-                            GameObject selectedTrap = trapWallPrefabs[trapIndex];
-                            Instantiate(selectedTrap, wallPos, Quaternion.identity, mazeParent);
-                            continue;
-                        }
-                    }
+                // East Wall
+                if (grid[x, y].wallE)
+                    SpawnWall(cellPos + new Vector3(cellSize / 2f, 0, 0), Quaternion.Euler(0, 90, 0), mazeParent);
 
-                    // Spawn normal wall
-                    Instantiate(wallPrefab, wallPos, Quaternion.identity, mazeParent);
-                }
+                // West Wall
+                if (grid[x, y].wallW)
+                    SpawnWall(cellPos + new Vector3(-cellSize / 2f, 0, 0), Quaternion.Euler(0, 90, 0), mazeParent);
             }
         }
 
-        Debug.Log("✅ Maze generated with multiple trap wall types!");
+        // Add single long boundary walls around maze
+        float totalWidth = width * cellSize;
+        float totalHeight = height * cellSize;
+        float wallY = wallPrefab.transform.position.y;
+
+        // North boundary
+        SpawnLongWall(new Vector3(totalWidth / 2f - cellSize / 2f, wallY, totalHeight), totalWidth, 0, mazeParent);
+        // South boundary
+        SpawnLongWall(new Vector3(totalWidth / 2f - cellSize / 2f, wallY, -cellSize), totalWidth, 0, mazeParent);
+        // West boundary
+        SpawnLongWall(new Vector3(-cellSize, wallY, totalHeight / 2f - cellSize / 2f), totalHeight, 90, mazeParent);
+        // East boundary
+        SpawnLongWall(new Vector3(totalWidth, wallY, totalHeight / 2f - cellSize / 2f), totalHeight, 90, mazeParent);
     }
 
-    // ---------------------- EXIT SPAWNING ---------------------- //
-    void SpawnExit()
+    void SpawnWall(Vector3 pos, Quaternion rot, Transform parent)
     {
-        if (!exitPrefab) return;
+        GameObject prefabToUse = wallPrefab;
+        if (trapWallPrefabs != null && trapWallPrefabs.Length > 0 && Random.value < trapWallChance)
+            prefabToUse = trapWallPrefabs[Random.Range(0, trapWallPrefabs.Length)];
 
-        Vector2Int farthestCell = new Vector2Int(1, 1);
-        float maxDist = 0f;
-
-        for (int x = 1; x < width - 1; x++)
-        {
-            for (int z = 1; z < height - 1; z++)
-            {
-                if (mazeGrid[x, z] == 0)
-                {
-                    float dist = Vector2.Distance(new Vector2(1, 1), new Vector2(x, z));
-                    if (dist > maxDist)
-                    {
-                        maxDist = dist;
-                        farthestCell = new Vector2Int(x, z);
-                    }
-                }
-            }
-        }
-
-        Vector3 exitPos = origin + new Vector3(farthestCell.x * cellSize, 0, farthestCell.y * cellSize);
-        Instantiate(exitPrefab, exitPos, Quaternion.identity);
+        Instantiate(prefabToUse, pos, rot, parent);
     }
 
-    private void OnDrawGizmosSelected()
+    void SpawnLongWall(Vector3 centerPos, float length, float rotationY, Transform parent)
     {
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawWireCube(
-            origin + new Vector3(width * cellSize / 2f, 0, height * cellSize / 2f),
-            new Vector3(width * cellSize, 0.1f, height * cellSize)
-        );
+        GameObject wall = Instantiate(wallPrefab, centerPos, Quaternion.Euler(0, rotationY, 0), parent);
+        wall.transform.localScale = new Vector3(length, wall.transform.localScale.y, wall.transform.localScale.z);
+    }
+
+    // ---------------- FLOOR & PLAYER ----------------
+    void BuildFloor()
+    {
+        if (!floorPrefab) return;
+
+        float totalWidth = width * cellSize;
+        float totalHeight = height * cellSize;
+
+        // Center the floor exactly under the maze
+        Vector3 floorCenter = new Vector3((totalWidth - cellSize) / 2f, -0.5f, (totalHeight - cellSize) / 2f);
+        GameObject floor = Instantiate(floorPrefab, floorCenter, Quaternion.identity, transform);
+        floor.name = "MazeFloor";
+
+        // Exact match with maze size
+        Vector3 meshSize = floor.GetComponent<MeshRenderer>().bounds.size;
+        Vector3 currentScale = floor.transform.localScale;
+
+        float scaleX = totalWidth / meshSize.x * currentScale.x;
+        float scaleZ = totalHeight / meshSize.z * currentScale.z;
+
+        floor.transform.localScale = new Vector3(scaleX, currentScale.y, scaleZ);
+    }
+
+    void SpawnPlayer()
+    {
+        if (!playerPrefab) return;
+
+        Vector3 center = new Vector3((width - 1) * cellSize / 2f, 1f, (height - 1) * cellSize / 2f);
+        Instantiate(playerPrefab, center, Quaternion.identity);
     }
 }
