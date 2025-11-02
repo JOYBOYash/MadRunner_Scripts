@@ -8,21 +8,24 @@ public class PlayerHealth : MonoBehaviour
 
     [Header("References")]
     public ScoreDataSO scoreData;
-    public GameOverUIManager gameOverUIManager;  // Link this in Inspector
-
-    public PlayerController playerController; // Reference to the player movement script
-
-    public Animator animator; // Reference to the Animator component
-
+    public GameOverUIManager gameOverUIManager;
+    public PlayerController playerController;
+    public Animator animator;
     public ScoreTracker scoreManager;
+    public AudioSource audioSource;
+    public AudioClip hitClip;
 
     private bool isDead = false;
     private Rigidbody rb;
 
+    // 🔥 Global flag accessible from anywhere
+    public static bool IsPlayerDead { get; private set; } = false;
+
     void Start()
     {
         currentHealth = maxHealth;
-        rb = GetComponent<Rigidbody>(); // Cache Rigidbody once for performance
+        rb = GetComponent<Rigidbody>();
+        IsPlayerDead = false;
     }
 
     public void TakeDamage(int damage)
@@ -30,89 +33,75 @@ public class PlayerHealth : MonoBehaviour
         if (isDead) return;
 
         currentHealth -= damage;
-        Debug.Log($"🩸 Player hit! Current HP: {currentHealth}");
+
+        // 💢 Play stumble animation only if still alive
+        if (currentHealth > 0)
+        {
+            animator.SetTrigger("Stumbles");
+            audioSource?.PlayOneShot(hitClip);
+            Debug.Log($"🩸 Player hit! Current HP: {currentHealth}");
+        }
 
         if (currentHealth <= 0)
-        {
             Die();
-        }
     }
 
     private void Die()
     {
+        if (isDead) return;
+
         isDead = true;
+        IsPlayerDead = true;
         Debug.Log("💀 Player has died!");
 
-        // Update high score only on death
-        if (scoreData.currentScore > scoreData.highScore)
-        {
-            scoreData.highScore = scoreData.currentScore;
-            scoreData.isNewHighScore = true;
-            scoreData.SaveHighScore();
-        }
-        else
-        {
-            scoreData.isNewHighScore = false;
-        }
+        // Stop score updates and save final score
+        FindFirstObjectByType<ScoreTracker>()?.StopTracking();
+        scoreData.FinalizeScore();
 
-    
-
-        // Show Game Over UI
-        if (gameOverUIManager != null)
-            gameOverUIManager.ShowGameOver();
-
-        // Stop player motion and disable movement scripts
+        // Stop player movement and physics
         if (rb != null)
         {
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
-            rb.isKinematic = true;  // Optional: Prevents further physics interactions
+            rb.isKinematic = true;
         }
 
-
+        // ⚰️ Tell Animator to lock in dead state
+        animator.SetBool("isDead", true);
+        animator.ResetTrigger("Stumbles");
+        animator.ResetTrigger("Revives");
         animator.SetTrigger("Dies");
 
-
+        // Disable controller and scoring
         if (playerController != null)
-        {
             playerController.enabled = false;
-        }
 
-         if (scoreManager != null)
-        {
+        if (scoreManager != null)
             scoreManager.enabled = false;
+
+        // Show game over
+        gameOverUIManager?.ShowGameOver();
+
+        // Ensure game isn't paused
+        if (Time.timeScale != 1)
+        {
+            Debug.LogWarning("⚠️ Resetting Time.timeScale to 1 because something paused the game.");
+            Time.timeScale = 1f;
         }
-
-
-        // Optional: Disable any other movement-related scripts (e.g., if you have multiple)
-        // Example: GetComponent<AnotherMovementScript>()?.enabled = false;
     }
 
     public void ResetHealth()
     {
         currentHealth = maxHealth;
         isDead = false;
+        IsPlayerDead = false;
 
-        // Re-enable movement on reset
-        if (rb != null)
-        {
-            rb.isKinematic = false;  // Restore physics if set to kinematic
-        }
+        rb.isKinematic = false;
 
-         animator.SetTrigger("Revives");
+        animator.SetBool("isDead", false);
+        animator.SetTrigger("Revives");
 
-
-        if (playerController != null)
-        {
-            playerController.enabled = true;
-        }
-        
-
-           if (scoreManager != null)
-        {
-            scoreManager.enabled = true;
-        }
-
-
+        playerController.enabled = true;
+        scoreManager.enabled = true;
     }
 }

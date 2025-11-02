@@ -12,9 +12,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2da1e61c4e552794d8ef0fee9a8a6bee, type: 3}
   m_Name: Player
   m_EditorClassIdentifier: Assembly-CSharp::PlayerMovementConfig
-  baseSpeed: 6
-  speedMultiplier: 0.05
-  maxSpeed: 25
+  baseSpeed: 10
+  speedMultiplier: 0.005
+  maxSpeed: 15
   rotationSmoothness: 10
   maxRotationSpeed: 60
   gravity: 9.8

@@ -174,7 +174,6 @@ public class PerfectMaze3D : MonoBehaviour
     void SpawnPlayer()
     {
         if (!playerPrefab) return;
-
         Vector3 center = new Vector3((width - 1) * cellSize / 2f, 1f, (height - 1) * cellSize / 2f);
         Instantiate(playerPrefab, center, Quaternion.identity);
     }

@@ -15,6 +15,11 @@ public class PlayerAnimationController : MonoBehaviour
         animator.SetTrigger("Dashes");
     }
 
+    // public void TriggerStumble()
+    // {
+    //     animator.SetTrigger("Stumbles");
+    // }
+
     public void TriggerSlide()
     {
         animator.SetTrigger("Slides");

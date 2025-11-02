@@ -6,21 +6,26 @@ public class PlayerController : MonoBehaviour
     [Header("References")]
     public PlayerInputHandler input;
     public PlayerAnimationController animatorController;
-    public PlayerMovementConfig config; // ScriptableObject config
-    public Transform cameraTransform;   // Assign your main camera here
+    public PlayerMovementConfig config;
+    public Transform cameraTransform;
+    public PlayerAudioManager audioManager;
 
-    [Header("Movement Mode")]
-    public bool useCameraRelativeMovement = true; // toggles between world and camera-relative
-
-    [Header("Rotation / Input")]
+    [Header("Movement Settings")]
+    public bool useCameraRelativeMovement = true;
     public float inputDeadzone = 0.15f;
+
+    [Header("Dash / Slide Settings")]
+    public float dashSpeedMultiplier = 2.5f;
+    public float slideSpeedMultiplier = 1.8f;
+    public float boostDuration = 0.5f;
 
     private CharacterController controller;
     private float currentSpeed;
-    private float speedTimer = 0f;
-
-    private Vector3 moveDirection;
     private Vector3 targetDirection;
+
+    private bool isSpeedBoosted = false;
+    private float boostTimer = 0f;
+    private float targetSpeed;
 
     void Start()
     {
@@ -36,11 +41,23 @@ public class PlayerController : MonoBehaviour
         if (cameraTransform == null && Camera.main != null)
             cameraTransform = Camera.main.transform;
 
+        if (audioManager == null)
+            audioManager = GetComponent<PlayerAudioManager>();
+
         currentSpeed = config.baseSpeed;
+        targetSpeed = currentSpeed;
     }
 
     void Update()
     {
+        // 🧠 Stop all logic if player is dead
+        if (PlayerHealth.IsPlayerDead)
+        {
+            animatorController?.animator?.SetFloat("Speed", 0f);
+            audioManager?.SetRunningState(false);
+            return;
+        }
+
         if (input == null)
         {
             Debug.LogWarning("⚠ No PlayerInputHandler assigned!");
@@ -49,25 +66,23 @@ public class PlayerController : MonoBehaviour
 
         HandleMovementAndRotation();
         HandleActions();
+        UpdateSpeedBoost();
     }
 
+    // 🏃 Movement + rotation
     void HandleMovementAndRotation()
     {
-        // ✅ Step 1: Get joystick input
-        Vector2 moveInput = input.moveInput; // make sure your PlayerInputHandler exposes this as Vector2
+        Vector2 moveInput = input.moveInput;
 
-        if ((moveInput.magnitude) < inputDeadzone)
-        {
+        if (moveInput.magnitude < inputDeadzone)
             moveInput = Vector2.zero;
-        }
 
-        // ✅ Step 2: Build camera-relative direction
+        // Camera-relative direction
         if (useCameraRelativeMovement && cameraTransform != null)
         {
             Vector3 camForward = cameraTransform.forward;
             Vector3 camRight = cameraTransform.right;
 
-            // Flatten to ground plane (no tilt)
             camForward.y = 0f;
             camRight.y = 0f;
             camForward.Normalize();
@@ -77,55 +92,81 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            // World-space movement (no camera influence)
             targetDirection = new Vector3(moveInput.x, 0f, moveInput.y).normalized;
         }
 
-        // ✅ Step 3: Rotate player toward target direction
+        // Rotate player
         if (targetDirection.magnitude > 0.1f)
         {
             Quaternion targetRotation = Quaternion.LookRotation(targetDirection, Vector3.up);
-            transform.rotation = Quaternion.Slerp(
-                transform.rotation,
-                targetRotation,
-                config.rotationSmoothness * Time.deltaTime
-            );
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, config.rotationSmoothness * Time.deltaTime);
         }
 
-        // ✅ Step 4: Gradually increase player’s forward speed over time
-        speedTimer += Time.deltaTime;
-        currentSpeed = Mathf.Min(config.baseSpeed + speedTimer * config.speedMultiplier, config.maxSpeed);
-
-        // ✅ Step 5: Move player forward continuously
+        // Move
         Vector3 forwardMove = transform.forward * currentSpeed;
-
-        // Apply gravity
         if (!controller.isGrounded)
             forwardMove.y -= config.gravity * Time.deltaTime;
 
         controller.Move(forwardMove * Time.deltaTime);
 
-        // ✅ Step 6: Update animations
-        // if (animatorController != null && animatorController.animator != null)
-        // {
-        //     animatorController.animator.SetFloat("Speed", currentSpeed);
-        // }
+        // Animation + footstep control
+        bool isMoving = controller.velocity.magnitude > 0.1f && controller.isGrounded;
+        animatorController?.animator?.SetFloat("Speed", controller.velocity.magnitude);
+        audioManager?.SetRunningState(isMoving);
     }
 
+    // 🎮 Dash + Slide
     void HandleActions()
     {
         if (input.dashPressed)
         {
-            animatorController.TriggerDash();
+            TriggerSpeedBoost(dashSpeedMultiplier);
+            animatorController?.TriggerDash();
+            audioManager?.PlayDash();
             FindFirstObjectByType<SmoothCameraFollow>()?.TriggerCinematicEffect();
             input.dashPressed = false;
         }
 
         if (input.slidePressed)
         {
-            animatorController.TriggerSlide();
+            TriggerSpeedBoost(slideSpeedMultiplier);
+            animatorController?.TriggerSlide();
+            audioManager?.PlaySlide();
             FindFirstObjectByType<SmoothCameraFollow>()?.TriggerCinematicEffect();
             input.slidePressed = false;
+        }
+    }
+
+    // 🚀 Speed Boost Logic
+    void TriggerSpeedBoost(float multiplier)
+    {
+        targetSpeed = config.baseSpeed * multiplier;
+        boostTimer = 0f;
+        isSpeedBoosted = true;
+    }
+
+    void UpdateSpeedBoost()
+    {
+        if (isSpeedBoosted)
+        {
+            boostTimer += Time.deltaTime;
+            if (boostTimer < boostDuration)
+            {
+                currentSpeed = Mathf.Lerp(currentSpeed, targetSpeed, Time.deltaTime * 10f);
+            }
+            else
+            {
+                currentSpeed = Mathf.Lerp(currentSpeed, config.baseSpeed, Time.deltaTime * 5f);
+                if (Mathf.Abs(currentSpeed - config.baseSpeed) < 0.1f)
+                {
+                    currentSpeed = config.baseSpeed;
+                    isSpeedBoosted = false;
+                }
+            }
+        }
+        else
+        {
+            currentSpeed = Mathf.Lerp(currentSpeed, config.baseSpeed, Time.deltaTime * 2f);
         }
     }
 }

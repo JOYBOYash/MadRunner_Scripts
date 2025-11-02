@@ -26,7 +26,7 @@ public class ScoreDataSO : ScriptableObject
         currentScore += value * scoreMultiplier;
     }
 
-    public void CheckAndUpdateHighScore()
+    public void FinalizeScore() // 👈 renamed for clarity
     {
         LoadHighScore();
 

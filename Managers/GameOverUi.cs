@@ -51,6 +51,8 @@ public class GameOverUIManager : MonoBehaviour
         }
     }
 
+    
+
     private System.Collections.IEnumerator PopTextEffect(Transform t)
     {
         Vector3 originalScale = t.localScale;
