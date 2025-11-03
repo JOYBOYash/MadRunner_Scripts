@@ -14,6 +14,9 @@ public class PlayerHealth : MonoBehaviour
     public ScoreTracker scoreManager;
     public AudioSource audioSource;
     public AudioClip hitClip;
+    public PlayerHealthUI playerHealthUI;   // 🩸 UI Reference
+    public ScreenShake screenShake;         // 💥 Screen shake reference
+    public ScreenFlash screenFlash;         // ⚡ Screen flash reference
 
     private bool isDead = false;
     private Rigidbody rb;
@@ -26,6 +29,10 @@ public class PlayerHealth : MonoBehaviour
         currentHealth = maxHealth;
         rb = GetComponent<Rigidbody>();
         IsPlayerDead = false;
+
+        // Initialize UI
+        if (playerHealthUI != null)
+            playerHealthUI.ResetHealthUI();
     }
 
     public void TakeDamage(int damage)
@@ -33,8 +40,16 @@ public class PlayerHealth : MonoBehaviour
         if (isDead) return;
 
         currentHealth -= damage;
+        if (currentHealth < 0) currentHealth = 0;
 
-        // 💢 Play stumble animation only if still alive
+        // 💢 Trigger effects
+        if (screenShake != null) screenShake.Shake(0.3f, 0.3f);
+        if (screenFlash != null) screenFlash.Flash(Color.red, 0.3f);
+
+        // 💔 Update UI hearts
+        playerHealthUI?.OnPlayerHit();
+
+        // 💢 Play stumble animation and sound
         if (currentHealth > 0)
         {
             animator.SetTrigger("Stumbles");
@@ -66,7 +81,7 @@ public class PlayerHealth : MonoBehaviour
             rb.isKinematic = true;
         }
 
-        // ⚰️ Tell Animator to lock in dead state
+        // ⚰️ Animator death state
         animator.SetBool("isDead", true);
         animator.ResetTrigger("Stumbles");
         animator.ResetTrigger("Revives");
@@ -82,7 +97,7 @@ public class PlayerHealth : MonoBehaviour
         // Show game over
         gameOverUIManager?.ShowGameOver();
 
-        // Ensure game isn't paused
+        // Ensure time is normal
         if (Time.timeScale != 1)
         {
             Debug.LogWarning("⚠️ Resetting Time.timeScale to 1 because something paused the game.");
@@ -103,5 +118,8 @@ public class PlayerHealth : MonoBehaviour
 
         playerController.enabled = true;
         scoreManager.enabled = true;
+
+        // 💖 Reset health UI
+        playerHealthUI?.ResetHealthUI();
     }
 }
