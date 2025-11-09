@@ -13,19 +13,26 @@ public class PerfectMaze3D : MonoBehaviour
     public GameObject floorPrefab;
     public GameObject playerPrefab;
 
-    [Header("Slime Spawning Settings")]
-    public GameObject[] basicSlimes;
-    public GameObject[] fastSlimes;
-    public GameObject[] turretSlimes;
+    [Header("Turret Spawn Settings")]
+    public GameObject[] easyTurrets;
+    public GameObject[] mediumTurrets;
+    public GameObject[] hardTurrets;
 
-    [Tooltip("Rotation applied ONLY to turret slimes.")]
-    public Vector3 turretSpawnRotation = new Vector3(0, 90, 0);
+    [Tooltip("How close the player must be before turrets spawn.")]
+    public float spawnRange = 25f;
+
+    [Tooltip("Vertical offset for turret height placement.")]
+    public float turretHeightOffset = 0.5f;
 
     public enum Difficulty { Easy, Medium, Hard }
     public Difficulty difficulty = Difficulty.Medium;
 
     private Cell[,] grid;
     private System.Random rng = new System.Random();
+    private Transform player;
+
+    private List<Vector3> turretPositions = new List<Vector3>();
+    private Dictionary<Vector3, GameObject> activeTurrets = new Dictionary<Vector3, GameObject>();
 
     private class Cell
     {
@@ -39,13 +46,40 @@ public class PerfectMaze3D : MonoBehaviour
         BuildMaze();
         BuildFloor();
         SpawnPlayer();
-        SpawnSlimesStrategically();
+        CacheTurretPositions();
+        FindPlayer();
     }
 
-    // ---------------- MAZE GENERATION ----------------
+    void Update()
+    {
+        if (player == null)
+        {
+            FindPlayer();
+            return;
+        }
+
+        foreach (var pos in turretPositions)
+        {
+            float dist = Vector3.Distance(player.position, pos);
+            bool shouldExist = dist <= spawnRange;
+            bool exists = activeTurrets.ContainsKey(pos);
+
+            if (shouldExist && !exists)
+                SpawnTurretAt(pos);
+
+            if (!shouldExist && exists)
+            {
+                Destroy(activeTurrets[pos]);
+                activeTurrets.Remove(pos);
+            }
+        }
+    }
+
+    // Maze Generation
     void GenerateMaze()
     {
         grid = new Cell[width, height];
+
         for (int x = 0; x < width; x++)
             for (int y = 0; y < height; y++)
                 grid[x, y] = new Cell();
@@ -93,7 +127,7 @@ public class PerfectMaze3D : MonoBehaviour
         }
     }
 
-    // ---------------- MAZE BUILD ----------------
+    // Maze Build
     void BuildMaze()
     {
         Transform mazeParent = new GameObject("Generated_Maze").transform;
@@ -110,7 +144,7 @@ public class PerfectMaze3D : MonoBehaviour
             }
     }
 
-    // ---------------- FLOOR & PLAYER ----------------
+    // Floor
     void BuildFloor()
     {
         if (!floorPrefab) return;
@@ -125,6 +159,7 @@ public class PerfectMaze3D : MonoBehaviour
         floor.transform.localScale = new Vector3(w / size.x * scale.x, scale.y, h / size.z * scale.z);
     }
 
+    // Player
     void SpawnPlayer()
     {
         if (!playerPrefab) return;
@@ -132,10 +167,17 @@ public class PerfectMaze3D : MonoBehaviour
         Instantiate(playerPrefab, c, Quaternion.identity);
     }
 
-    // ---------------- SLIME SPAWNING ----------------
-    void SpawnSlimesStrategically()
+    void FindPlayer()
     {
-        List<Vector3> points = new List<Vector3>();
+        GameObject p = GameObject.FindGameObjectWithTag("Player");
+        if (p != null)
+            player = p.transform;
+    }
+
+    // Turret Placement
+    void CacheTurretPositions()
+    {
+        turretPositions.Clear();
 
         for (int x = 1; x < width - 1; x++)
             for (int y = 1; y < height - 1; y++)
@@ -144,41 +186,26 @@ public class PerfectMaze3D : MonoBehaviour
                                     (!grid[x, y].wallE && !grid[x, y].wallW);
 
                 if (intersection)
-                    points.Add(new Vector3(x * cellSize, 0, y * cellSize));
+                    turretPositions.Add(new Vector3(x * cellSize, turretHeightOffset, y * cellSize));
             }
-
-        int count = difficulty switch
-        {
-            Difficulty.Easy => points.Count / 8,
-            Difficulty.Medium => points.Count / 4,
-            Difficulty.Hard => points.Count / 2,
-            _ => 5
-        };
-
-        for (int i = 0; i < count; i++)
-        {
-            Vector3 pos = points[rng.Next(points.Count)] + Vector3.up * 0.5f;
-            GameObject prefab = ChooseSlimePrefab();
-
-            Quaternion rot = prefab != null && IsTurret(prefab)
-                ? Quaternion.Euler(turretSpawnRotation)
-                : Quaternion.identity;
-
-            Instantiate(prefab, pos, rot);
-        }
     }
 
-    GameObject ChooseSlimePrefab()
+    void SpawnTurretAt(Vector3 pos)
     {
-        return difficulty switch
+        GameObject prefab = difficulty switch
         {
-            Difficulty.Easy => RandomFrom(basicSlimes),
-            Difficulty.Medium => (Random.value < 0.6f ? RandomFrom(basicSlimes) : RandomFrom(fastSlimes)),
-            Difficulty.Hard => (Random.value < 0.4f ? RandomFrom(turretSlimes) : RandomFrom(fastSlimes)),
-            _ => RandomFrom(basicSlimes)
+            Difficulty.Easy => RandomFrom(easyTurrets),
+            Difficulty.Medium => RandomFrom(mediumTurrets),
+            Difficulty.Hard => RandomFrom(hardTurrets),
+            _ => RandomFrom(easyTurrets)
         };
+
+        if (prefab == null) return;
+
+        GameObject turret = Instantiate(prefab, pos, Quaternion.identity);
+        activeTurrets[pos] = turret;
     }
 
-    GameObject RandomFrom(GameObject[] arr) => (arr != null && arr.Length > 0) ? arr[rng.Next(arr.Length)] : null;
-    bool IsTurret(GameObject prefab) => System.Array.IndexOf(turretSlimes, prefab) >= 0;
+    GameObject RandomFrom(GameObject[] arr) =>
+        (arr != null && arr.Length > 0) ? arr[rng.Next(arr.Length)] : null;
 }
