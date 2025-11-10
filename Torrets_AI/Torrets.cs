@@ -1,211 +1,245 @@
 using UnityEngine;
 using System.Collections;
 
-public class MultiMuzzleShooterWithRange : MonoBehaviour
+[RequireComponent(typeof(AudioSource))]
+public class MultiMuzzleTurretAdvanced : MonoBehaviour
 {
     public enum TurretState { Idle, Patrolling, Engaging }
     private TurretState state = TurretState.Idle;
 
-    [Header("Projectile & Muzzle Setup")]
-    public Transform[] muzzlePoints;
-    public GameObject projectilePrefab;
+    [Header("Player / Ranges")]
+    public string playerTag = "Player";
+    public float patrollableRange = 18f;
+    public float engageRange = 12f;
+    public float rotationSpeedDegPerSec = 180f;
 
-    [Header("Effects")]
-    public ParticleSystem muzzleVFX;
-    public ParticleSystem anticipationVFX;
+    [Header("Muzzles (ordered)")]
+    public Transform[] muzzlePoints;
+
+    [Header("VFX (match muzzle order)")]
+    public GameObject[] anticipationVFXs;
+    public GameObject[] muzzleFlashVFXs;
+
+    [Header("Audio")]
     public AudioSource audioSource;
     public AudioClip anticipationSFX;
     public AudioClip fireSFX;
 
-    [Header("Rotation Axis Controls")]
-    public bool rotateX = false;
-    public bool rotateY = true;
-    public bool rotateZ = false;
+    [Header("Projectile")]
+    public GameObject projectilePrefab;
+    public float projectileSpeed = 25f;
 
-    [Header("Rotation Settings")]
-    public float rotationSpeed = 5f;
+    public enum ProjectileForward { Forward, Up, Right, Custom }
+    public ProjectileForward projectileForward = ProjectileForward.Forward;
+    public Vector3 projectileCustomForward = Vector3.forward;
 
-    [Header("Ranges")]
-    public float patrollableRange = 15f;
-    public float attackRange = 12f;
-    public float lineOfSightCheckRadius = 1f;
-    public LayerMask lineOfSightMask;
+    [Header("Timings")]
+    public float anticipationDuration = 0.3f;
+    public float perMuzzleCooldown = 0.2f;
+    public float cycleDelayAfterAllMuzzles = 0.3f;
+    public float muzzleFlashDuration = 0.08f; // <<< KEY FIX HERE
 
-    [Header("Combat Settings")]
-    public float projectileSpeed = 20f;
-    public float accuracySpread = 1f;
-    public float fireCooldown = 1.2f;
-    public float anticipationDelay = 0.35f;
-
-    [Header("Patrol Behavior")]
-    public float patrolRotateSpeed = 30f;
-    public float patrolSweepAngle = 45f;
-
-    [Header("View Cone Debug")]
-    public float viewAngle = 60f;
+    [Header("Patrol")]
+    public bool patrolEnabled = true;
+    public float patrolSweepAngle = 35f;
+    public float patrolSpeed = 1f;
+    public bool lockRotationX, lockRotationY, lockRotationZ;
 
     private Transform player;
-    private bool isFiring = false;
-    private float patrolStartYaw;
-    private int currentMuzzleIndex = 0;
+    private Coroutine firingRoutine = null;
+    private float baseYaw;
+    private bool isActive = true;
+
+    void Awake()
+    {
+        if (audioSource == null)
+            audioSource = GetComponent<AudioSource>();
+
+        baseYaw = transform.eulerAngles.y;
+
+        EnableAllAnticipation();
+        DisableAllMuzzleFlash(); // <<< IMPORTANT
+    }
 
     void Start()
     {
-        patrolStartYaw = transform.eulerAngles.y;
-        FindPlayer();
+        player = GameObject.FindGameObjectWithTag(playerTag)?.transform;
     }
 
     void Update()
     {
+        if (!isActive) return;
+
         if (player == null)
-        {
-            FindPlayer();
-            return;
-        }
+            player = GameObject.FindGameObjectWithTag(playerTag)?.transform;
+
+        if (player == null) return;
 
         float dist = Vector3.Distance(transform.position, player.position);
 
-        switch (state)
+        if (dist > patrollableRange)
+            SetState(TurretState.Idle);
+        else if (dist > engageRange)
+            SetState(TurretState.Patrolling);
+        else
+            SetState(TurretState.Engaging);
+
+        if (state == TurretState.Patrolling)
+            DoPatrol();
+        else if (state == TurretState.Engaging)
+            DoRotateToPlayer();
+    }
+
+    void SetState(TurretState newState)
+    {
+        if (newState != TurretState.Engaging && firingRoutine != null)
         {
-            case TurretState.Idle:
-                if (dist <= patrollableRange) state = TurretState.Patrolling;
-                break;
-
-            case TurretState.Patrolling:
-                PatrolMotion();
-                if (dist <= attackRange && HasLineOfSight())
-                    state = TurretState.Engaging;
-                if (dist > patrollableRange)
-                    state = TurretState.Idle;
-                break;
-
-            case TurretState.Engaging:
-                RotateTowardsPlayer();
-                if (!isFiring) StartCoroutine(FireSequence());
-                if (dist > patrollableRange || !HasLineOfSight())
-                    state = TurretState.Patrolling;
-                break;
+            StopCoroutine(firingRoutine);
+            firingRoutine = null;
+            EnableAllAnticipation();
         }
+
+        if (newState == TurretState.Engaging && firingRoutine == null)
+            firingRoutine = StartCoroutine(FiringCycle());
+
+        state = newState;
     }
 
-    void FindPlayer()
+    void DoPatrol()
     {
-        GameObject p = GameObject.FindGameObjectWithTag("Player");
-        if (p != null) player = p.transform;
+        if (!patrolEnabled) return;
+
+        float angle = Mathf.Sin(Time.time * patrolSpeed) * patrolSweepAngle;
+        Vector3 e = transform.eulerAngles;
+
+        if (!lockRotationX) e.x = angle;
+        if (!lockRotationY) e.y = baseYaw + angle;
+        if (!lockRotationZ) e.z = angle;
+
+        transform.rotation = Quaternion.Euler(e);
     }
 
-    bool HasLineOfSight()
-    {
-        Vector3 dir = (player.position - transform.position).normalized;
-        return !Physics.SphereCast(transform.position, lineOfSightCheckRadius, dir,
-            out RaycastHit hit, attackRange, lineOfSightMask) || hit.transform.CompareTag("Player");
-    }
-
-    void RotateTowardsPlayer()
+    void DoRotateToPlayer()
     {
         if (player == null) return;
 
-        Vector3 direction = player.position - transform.position;
+        Vector3 dir = (player.position - transform.position);
+        Quaternion target = Quaternion.LookRotation(dir.normalized);
+        Vector3 tE = target.eulerAngles, cE = transform.eulerAngles;
 
-        if (!rotateX)
-            direction.y = 0;
+        if (lockRotationX) tE.x = cE.x;
+        if (lockRotationY) tE.y = cE.y;
+        if (lockRotationZ) tE.z = cE.z;
 
-        Quaternion targetRotation = Quaternion.LookRotation(direction);
-
-        Vector3 e = targetRotation.eulerAngles;
-        Vector3 current = transform.rotation.eulerAngles;
-
-        if (!rotateX) e.x = current.x;
-        if (!rotateY) e.y = current.y;
-        if (!rotateZ) e.z = current.z;
-
-        Quaternion finalRotation = Quaternion.Euler(e);
-        transform.rotation = Quaternion.Lerp(transform.rotation, finalRotation, Time.deltaTime * rotationSpeed);
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation,
+            Quaternion.Euler(tE),
+            rotationSpeedDegPerSec * Time.deltaTime
+        );
     }
 
-    void PatrolMotion()
+    IEnumerator FiringCycle()
     {
-        float angle = Mathf.Sin(Time.time * patrolRotateSpeed * 0.1f) * patrolSweepAngle;
-        Vector3 baseRot = transform.rotation.eulerAngles;
+        while (state == TurretState.Engaging)
+        {
+            EnableAllAnticipation();
+            if (audioSource && anticipationSFX)
+                audioSource.PlayOneShot(anticipationSFX);
 
-        if (rotateX) baseRot.x = angle;
-        if (rotateY) baseRot.y = patrolStartYaw + angle;
-        if (rotateZ) baseRot.z = angle;
+            yield return new WaitForSeconds(anticipationDuration);
 
-        transform.rotation = Quaternion.Euler(baseRot);
+            for (int i = 0; i < muzzlePoints.Length && state == TurretState.Engaging; i++)
+            {
+                DisableAnticipation(i);
+                FireMuzzleOnce(i);
+                yield return new WaitForSeconds(perMuzzleCooldown);
+                EnableAnticipation(i);
+            }
+
+            yield return new WaitForSeconds(cycleDelayAfterAllMuzzles);
+        }
+
+        EnableAllAnticipation();
+        firingRoutine = null;
     }
 
-    private IEnumerator FireSequence()
+    void FireMuzzleOnce(int index)
     {
-        isFiring = true;
+        Transform muzzle = muzzlePoints[index];
 
-        if (audioSource && anticipationSFX)
-            audioSource.PlayOneShot(anticipationSFX);
-
-        if (anticipationVFX != null && muzzlePoints.Length > 0)
-            Instantiate(anticipationVFX, muzzlePoints[currentMuzzleIndex].position, muzzlePoints[currentMuzzleIndex].rotation);
-
-        yield return new WaitForSeconds(anticipationDelay);
-
-        FireProjectiles();
-
-        yield return new WaitForSeconds(fireCooldown);
-        isFiring = false;
-    }
-
-    void FireProjectiles()
-    {
-        if (muzzlePoints.Length == 0) return;
-
-        Transform muzzle = muzzlePoints[currentMuzzleIndex];
-        GameObject proj = Instantiate(projectilePrefab, muzzle.position, muzzle.rotation);
-
-        Vector3 dir = muzzle.forward + Random.insideUnitSphere * (accuracySpread * 0.01f);
-        proj.transform.forward = dir;
-
-        if (proj.TryGetComponent(out Projectile p)) p.speed = projectileSpeed;
-
-        if (muzzleVFX != null)
-            Instantiate(muzzleVFX, muzzle.position, muzzle.rotation);
+        EnableMuzzleFlash(index); // <<< FIXED FLASH
+        StartCoroutine(DisableFlashAfterDelay(index));
 
         if (audioSource && fireSFX)
             audioSource.PlayOneShot(fireSFX);
 
-        currentMuzzleIndex = (currentMuzzleIndex + 1) % muzzlePoints.Length;
+        Vector3 localForward = projectileForward switch
+        {
+            ProjectileForward.Forward => Vector3.forward,
+            ProjectileForward.Up => Vector3.up,
+            ProjectileForward.Right => Vector3.right,
+            ProjectileForward.Custom => projectileCustomForward.normalized,
+            _ => Vector3.forward
+        };
+
+        Vector3 worldDir = muzzle.TransformDirection(localForward).normalized;
+
+        GameObject proj = Instantiate(projectilePrefab, muzzle.position, Quaternion.LookRotation(worldDir));
+
+        if (proj.TryGetComponent(out Projectile p))
+            p.speed = projectileSpeed;
     }
 
-    void OnDrawGizmos()
+    IEnumerator DisableFlashAfterDelay(int index)
     {
-        Gizmos.color = Color.cyan;
-        Gizmos.DrawWireSphere(transform.position, patrollableRange);
+        yield return new WaitForSeconds(muzzleFlashDuration);
+        DisableMuzzleFlash(index);
+    }
 
-        Gizmos.color = Color.red;
-        Gizmos.DrawWireSphere(transform.position, attackRange);
+    void EnableAllAnticipation()
+    {
+        foreach (var fx in anticipationVFXs)
+            if (fx) fx.SetActive(true);
+    }
 
-        // View Cone
-        Gizmos.color = new Color(1f, 0.5f, 0f, 0.35f);
-        Vector3 forward = transform.forward;
-        Vector3 leftLimit = Quaternion.Euler(0, -viewAngle / 2f, 0) * forward;
-        Vector3 rightLimit = Quaternion.Euler(0, viewAngle / 2f, 0) * forward;
-        Gizmos.DrawRay(transform.position, leftLimit * attackRange);
-        Gizmos.DrawRay(transform.position, rightLimit * attackRange);
+    void EnableAnticipation(int i)
+    {
+        if (i < anticipationVFXs.Length && anticipationVFXs[i])
+            anticipationVFXs[i].SetActive(true);
+    }
 
-        // Muzzle direction debug
-        if (muzzlePoints != null)
+    void DisableAnticipation(int i)
+    {
+        if (i < anticipationVFXs.Length && anticipationVFXs[i])
+            anticipationVFXs[i].SetActive(false);
+    }
+
+    void DisableAllMuzzleFlash()
+    {
+        foreach (var fx in muzzleFlashVFXs)
+            if (fx) fx.SetActive(false);
+    }
+
+    void EnableMuzzleFlash(int i)
+    {
+        if (i < muzzleFlashVFXs.Length && muzzleFlashVFXs[i])
+            muzzleFlashVFXs[i].SetActive(true);
+    }
+
+    void DisableMuzzleFlash(int i)
+    {
+        if (i < muzzleFlashVFXs.Length && muzzleFlashVFXs[i])
+            muzzleFlashVFXs[i].SetActive(false);
+    }
+
+    public void SetActive(bool on)
+    {
+        isActive = on;
+        if (!on)
         {
-            Gizmos.color = Color.green;
-            foreach (var m in muzzlePoints)
-            {
-                if (m != null)
-                    Gizmos.DrawRay(m.position, m.forward * 1f);
-            }
-        }
-
-        // LOS line
-        if (player != null)
-        {
-            Gizmos.color = HasLineOfSight() ? Color.green : Color.yellow;
-            Gizmos.DrawLine(transform.position, player.position);
+            if (firingRoutine != null) StopCoroutine(firingRoutine);
+            firingRoutine = null;
+            EnableAllAnticipation();
         }
     }
 }
