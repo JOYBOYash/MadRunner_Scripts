@@ -162,34 +162,47 @@ public class MultiMuzzleTurretAdvanced : MonoBehaviour
         EnableAllAnticipation();
         firingRoutine = null;
     }
+void FireMuzzleOnce(int index)
+{
+    Transform muzzle = muzzlePoints[index];
 
-    void FireMuzzleOnce(int index)
+    EnableMuzzleFlash(index);
+    StartCoroutine(DisableFlashAfterDelay(index));
+
+    if (audioSource && fireSFX)
+        audioSource.PlayOneShot(fireSFX);
+
+    if (player == null) return;
+
+    // 1. Get direction to player in world space
+    Vector3 toPlayerWorld = (player.position - muzzle.position).normalized;
+
+    // 2. Convert that direction to muzzle local space
+    Vector3 toPlayerLocal = muzzle.InverseTransformDirection(toPlayerWorld);
+
+    // 3. Decide which local axis to use to shoot along
+    Vector3 chosenLocalAxis = projectileForward switch
     {
-        Transform muzzle = muzzlePoints[index];
+        ProjectileForward.Forward => Vector3.forward,
+        ProjectileForward.Up => Vector3.up,
+        ProjectileForward.Right => Vector3.right,
+        ProjectileForward.Custom => projectileCustomForward.normalized,
+        _ => Vector3.forward
+    };
 
-        EnableMuzzleFlash(index); // <<< FIXED FLASH
-        StartCoroutine(DisableFlashAfterDelay(index));
+    // 4. Align chosen axis to point at player direction in local space
+    Quaternion localRot = Quaternion.FromToRotation(chosenLocalAxis, toPlayerLocal);
 
-        if (audioSource && fireSFX)
-            audioSource.PlayOneShot(fireSFX);
+    // 5. Convert back to world rotation
+    Quaternion finalRot = muzzle.rotation * localRot;
 
-        Vector3 localForward = projectileForward switch
-        {
-            ProjectileForward.Forward => Vector3.forward,
-            ProjectileForward.Up => Vector3.up,
-            ProjectileForward.Right => Vector3.right,
-            ProjectileForward.Custom => projectileCustomForward.normalized,
-            _ => Vector3.forward
-        };
+    // 6. Spawn projectile
+    GameObject proj = Instantiate(projectilePrefab, muzzle.position, finalRot);
 
-        Vector3 worldDir = muzzle.TransformDirection(localForward).normalized;
-
-        GameObject proj = Instantiate(projectilePrefab, muzzle.position, Quaternion.LookRotation(worldDir));
-
-        if (proj.TryGetComponent(out Projectile p))
-            p.speed = projectileSpeed;
-    }
-
+    // 7. Set projectile speed
+    if (proj.TryGetComponent(out Projectile p))
+        p.speed = projectileSpeed;
+}
     IEnumerator DisableFlashAfterDelay(int index)
     {
         yield return new WaitForSeconds(muzzleFlashDuration);
