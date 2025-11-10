@@ -13,6 +13,11 @@ public class MultiMuzzleTurretAdvanced : MonoBehaviour
     public float engageRange = 12f;
     public float rotationSpeedDegPerSec = 180f;
 
+    [Header("Model Facing Offset")]
+[Tooltip("Use this to correct model's facing direction if it's visually off (e.g., 90° yaw).")]
+public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
+
+
     [Header("Muzzles (ordered)")]
     public Transform[] muzzlePoints;
 
@@ -119,24 +124,32 @@ public class MultiMuzzleTurretAdvanced : MonoBehaviour
         transform.rotation = Quaternion.Euler(e);
     }
 
-    void DoRotateToPlayer()
-    {
-        if (player == null) return;
+void DoRotateToPlayer()
+{
+    if (player == null) return;
 
-        Vector3 dir = (player.position - transform.position);
-        Quaternion target = Quaternion.LookRotation(dir.normalized);
-        Vector3 tE = target.eulerAngles, cE = transform.eulerAngles;
+    // Step 1️⃣ Direction to player
+    Vector3 dir = (player.position - transform.position);
+    Quaternion target = Quaternion.LookRotation(dir.normalized);
 
-        if (lockRotationX) tE.x = cE.x;
-        if (lockRotationY) tE.y = cE.y;
-        if (lockRotationZ) tE.z = cE.z;
+    // Step 2️⃣ Apply yaw correction offset for model’s facing direction
+    target *= Quaternion.Euler(0f, modelFacingOffsetY, 0f);
 
-        transform.rotation = Quaternion.RotateTowards(
-            transform.rotation,
-            Quaternion.Euler(tE),
-            rotationSpeedDegPerSec * Time.deltaTime
-        );
-    }
+    // Step 3️⃣ Preserve locked rotation axes
+    Vector3 tE = target.eulerAngles;
+    Vector3 cE = transform.eulerAngles;
+
+    if (lockRotationX) tE.x = cE.x;
+    if (lockRotationY) tE.y = cE.y;
+    if (lockRotationZ) tE.z = cE.z;
+
+    // Step 4️⃣ Smoothly rotate toward corrected direction
+    transform.rotation = Quaternion.RotateTowards(
+        transform.rotation,
+        Quaternion.Euler(tE),
+        rotationSpeedDegPerSec * Time.deltaTime
+    );
+}
 
     IEnumerator FiringCycle()
     {
