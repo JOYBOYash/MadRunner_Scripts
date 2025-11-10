@@ -57,6 +57,14 @@ public class PlayerHealth : MonoBehaviour
             Debug.Log($"🩸 Player hit! Current HP: {currentHealth}");
         }
 
+
+        if (rb != null)
+        {
+            Vector3 knockDir = (rb.transform.position - transform.position).normalized;
+            rb.AddForce(knockDir * 5f, ForceMode.Impulse);
+        }
+
+
         if (currentHealth <= 0)
             Die();
     }

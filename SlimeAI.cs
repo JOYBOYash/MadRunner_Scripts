@@ -27,6 +27,10 @@ public class SlimeAI_3D : MonoBehaviour
     {
         rb = GetComponent<Rigidbody>();
         rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        rb.isKinematic = false;
+
+        Collider col = GetComponent<Collider>();
+        col.isTrigger = true; // 👈 MAKE SLIME A TRIGGER-BASED DAMAGE AREA
 
         baseScale = transform.localScale;
 
@@ -43,7 +47,7 @@ public class SlimeAI_3D : MonoBehaviour
 
         float distance = Vector3.Distance(transform.position, player.position);
 
-        // Wobble bounce effect for slime liveliness
+        // Bounce animation for slime life
         float bounce = Mathf.Sin(Time.time * bounceFrequency) * bounceAmplitude;
         transform.localScale = baseScale + new Vector3(0, bounce, 0);
 
@@ -57,11 +61,11 @@ public class SlimeAI_3D : MonoBehaviour
     {
         Vector3 direction = (player.position - transform.position).normalized;
 
-        // Smooth rotation toward player
+        // Smoothly rotate toward player
         Quaternion lookRotation = Quaternion.LookRotation(direction);
         transform.rotation = Quaternion.Slerp(transform.rotation, lookRotation, Time.deltaTime * rotationSpeed);
 
-        // Move only if outside attack range
+        // Move if not within attack range
         if (distance > stoppingDistance)
         {
             Vector3 newPos = transform.position + transform.forward * moveSpeed * Time.deltaTime;
@@ -69,22 +73,21 @@ public class SlimeAI_3D : MonoBehaviour
         }
     }
 
-    private void OnCollisionStay(Collision collision)
+    // ✅ Trigger-based attack (more reliable for player detection)
+    private void OnTriggerStay(Collider other)
     {
-        if (Time.time - lastAttackTime < attackCooldown) return;
         if (isDead) return;
+        if (Time.time - lastAttackTime < attackCooldown) return;
 
-        if (collision.gameObject.CompareTag("Player"))
+        if (other.CompareTag("Player"))
         {
             lastAttackTime = Time.time;
 
-            PlayerHealth playerHealth = collision.gameObject.GetComponent<PlayerHealth>();
+            PlayerHealth playerHealth = other.GetComponent<PlayerHealth>();
             if (playerHealth != null)
             {
                 playerHealth.TakeDamage(damage);
-                // Optional: small knockback
-                Vector3 knockbackDir = (collision.transform.position - transform.position).normalized * -1f;
-                rb.AddForce(knockbackDir * 2f, ForceMode.Impulse);
+                Debug.Log($"🩸 Slime dealt {damage} damage to player!");
             }
         }
     }
@@ -93,6 +96,7 @@ public class SlimeAI_3D : MonoBehaviour
     {
         isDead = true;
         rb.isKinematic = true;
+        GetComponent<Collider>().enabled = false;
         Destroy(gameObject, 0.3f);
     }
 
