@@ -14,9 +14,8 @@ public class MultiMuzzleTurretAdvanced : MonoBehaviour
     public float rotationSpeedDegPerSec = 180f;
 
     [Header("Model Facing Offset")]
-[Tooltip("Use this to correct model's facing direction if it's visually off (e.g., 90° yaw).")]
-public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
-
+    [Tooltip("Use this to correct model's facing direction if it's visually off (e.g., 90° yaw).")]
+    public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
 
     [Header("Muzzles (ordered)")]
     public Transform[] muzzlePoints;
@@ -42,7 +41,7 @@ public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
     public float anticipationDuration = 0.3f;
     public float perMuzzleCooldown = 0.2f;
     public float cycleDelayAfterAllMuzzles = 0.3f;
-    public float muzzleFlashDuration = 0.08f; // <<< KEY FIX HERE
+    public float muzzleFlashDuration = 0.08f;
 
     [Header("Patrol")]
     public bool patrolEnabled = true;
@@ -63,7 +62,7 @@ public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
         baseYaw = transform.eulerAngles.y;
 
         EnableAllAnticipation();
-        DisableAllMuzzleFlash(); // <<< IMPORTANT
+        DisableAllMuzzleFlash();
     }
 
     void Start()
@@ -73,11 +72,18 @@ public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
 
     void Update()
     {
+        // 🧠 If player is dead → turret immediately stops everything.
+        if (PlayerHealth.IsPlayerDead)
+        {
+            if (isActive)
+                ForceShutdown();
+            return;
+        }
+
         if (!isActive) return;
 
         if (player == null)
             player = GameObject.FindGameObjectWithTag(playerTag)?.transform;
-
         if (player == null) return;
 
         float dist = Vector3.Distance(transform.position, player.position);
@@ -124,37 +130,40 @@ public float modelFacingOffsetY = 0f; // adjust per prefab (try 90 or -90)
         transform.rotation = Quaternion.Euler(e);
     }
 
-void DoRotateToPlayer()
-{
-    if (player == null) return;
+    void DoRotateToPlayer()
+    {
+        if (player == null) return;
 
-    // Step 1️⃣ Direction to player
-    Vector3 dir = (player.position - transform.position);
-    Quaternion target = Quaternion.LookRotation(dir.normalized);
+        Vector3 dir = (player.position - transform.position);
+        Quaternion target = Quaternion.LookRotation(dir.normalized);
 
-    // Step 2️⃣ Apply yaw correction offset for model’s facing direction
-    target *= Quaternion.Euler(0f, modelFacingOffsetY, 0f);
+        // apply facing offset fix
+        target *= Quaternion.Euler(0f, modelFacingOffsetY, 0f);
 
-    // Step 3️⃣ Preserve locked rotation axes
-    Vector3 tE = target.eulerAngles;
-    Vector3 cE = transform.eulerAngles;
+        Vector3 tE = target.eulerAngles;
+        Vector3 cE = transform.eulerAngles;
 
-    if (lockRotationX) tE.x = cE.x;
-    if (lockRotationY) tE.y = cE.y;
-    if (lockRotationZ) tE.z = cE.z;
+        if (lockRotationX) tE.x = cE.x;
+        if (lockRotationY) tE.y = cE.y;
+        if (lockRotationZ) tE.z = cE.z;
 
-    // Step 4️⃣ Smoothly rotate toward corrected direction
-    transform.rotation = Quaternion.RotateTowards(
-        transform.rotation,
-        Quaternion.Euler(tE),
-        rotationSpeedDegPerSec * Time.deltaTime
-    );
-}
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation,
+            Quaternion.Euler(tE),
+            rotationSpeedDegPerSec * Time.deltaTime
+        );
+    }
 
     IEnumerator FiringCycle()
     {
         while (state == TurretState.Engaging)
         {
+            if (PlayerHealth.IsPlayerDead)
+            {
+                ForceShutdown();
+                yield break;
+            }
+
             EnableAllAnticipation();
             if (audioSource && anticipationSFX)
                 audioSource.PlayOneShot(anticipationSFX);
@@ -163,6 +172,12 @@ void DoRotateToPlayer()
 
             for (int i = 0; i < muzzlePoints.Length && state == TurretState.Engaging; i++)
             {
+                if (PlayerHealth.IsPlayerDead)
+                {
+                    ForceShutdown();
+                    yield break;
+                }
+
                 DisableAnticipation(i);
                 FireMuzzleOnce(i);
                 yield return new WaitForSeconds(perMuzzleCooldown);
@@ -175,47 +190,40 @@ void DoRotateToPlayer()
         EnableAllAnticipation();
         firingRoutine = null;
     }
-void FireMuzzleOnce(int index)
-{
-    Transform muzzle = muzzlePoints[index];
 
-    EnableMuzzleFlash(index);
-    StartCoroutine(DisableFlashAfterDelay(index));
-
-    if (audioSource && fireSFX)
-        audioSource.PlayOneShot(fireSFX);
-
-    if (player == null) return;
-
-    // 1. Get direction to player in world space
-    Vector3 toPlayerWorld = (player.position - muzzle.position).normalized;
-
-    // 2. Convert that direction to muzzle local space
-    Vector3 toPlayerLocal = muzzle.InverseTransformDirection(toPlayerWorld);
-
-    // 3. Decide which local axis to use to shoot along
-    Vector3 chosenLocalAxis = projectileForward switch
+    void FireMuzzleOnce(int index)
     {
-        ProjectileForward.Forward => Vector3.forward,
-        ProjectileForward.Up => Vector3.up,
-        ProjectileForward.Right => Vector3.right,
-        ProjectileForward.Custom => projectileCustomForward.normalized,
-        _ => Vector3.forward
-    };
+        Transform muzzle = muzzlePoints[index];
 
-    // 4. Align chosen axis to point at player direction in local space
-    Quaternion localRot = Quaternion.FromToRotation(chosenLocalAxis, toPlayerLocal);
+        EnableMuzzleFlash(index);
+        StartCoroutine(DisableFlashAfterDelay(index));
 
-    // 5. Convert back to world rotation
-    Quaternion finalRot = muzzle.rotation * localRot;
+        if (audioSource && fireSFX)
+            audioSource.PlayOneShot(fireSFX);
 
-    // 6. Spawn projectile
-    GameObject proj = Instantiate(projectilePrefab, muzzle.position, finalRot);
+        if (player == null) return;
 
-    // 7. Set projectile speed
-    if (proj.TryGetComponent(out Projectile p))
-        p.speed = projectileSpeed;
-}
+        Vector3 toPlayerWorld = (player.position - muzzle.position).normalized;
+        Vector3 toPlayerLocal = muzzle.InverseTransformDirection(toPlayerWorld);
+
+        Vector3 chosenLocalAxis = projectileForward switch
+        {
+            ProjectileForward.Forward => Vector3.forward,
+            ProjectileForward.Up => Vector3.up,
+            ProjectileForward.Right => Vector3.right,
+            ProjectileForward.Custom => projectileCustomForward.normalized,
+            _ => Vector3.forward
+        };
+
+        Quaternion localRot = Quaternion.FromToRotation(chosenLocalAxis, toPlayerLocal);
+        Quaternion finalRot = muzzle.rotation * localRot;
+
+        GameObject proj = Instantiate(projectilePrefab, muzzle.position, finalRot);
+
+        if (proj.TryGetComponent(out Projectile p))
+            p.speed = projectileSpeed;
+    }
+
     IEnumerator DisableFlashAfterDelay(int index)
     {
         yield return new WaitForSeconds(muzzleFlashDuration);
@@ -267,5 +275,29 @@ void FireMuzzleOnce(int index)
             firingRoutine = null;
             EnableAllAnticipation();
         }
+    }
+
+    // 🚨 NEW: Immediately stop everything when player dies
+    void ForceShutdown()
+    {
+        isActive = false;
+
+        if (firingRoutine != null)
+        {
+            StopCoroutine(firingRoutine);
+            firingRoutine = null;
+        }
+
+        DisableAllMuzzleFlash();
+        EnableAllAnticipation();
+        state = TurretState.Idle;
+
+        // Optionally: stop audio abruptly to avoid lingering SFX
+        if (audioSource && audioSource.isPlaying)
+            audioSource.Stop();
+
+        // Optional: disable all visual effects
+        foreach (var fx in anticipationVFXs)
+            if (fx) fx.SetActive(false);
     }
 }

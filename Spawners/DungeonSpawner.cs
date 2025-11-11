@@ -175,37 +175,94 @@ public class PerfectMaze3D : MonoBehaviour
     }
 
     // Turret Placement
-    void CacheTurretPositions()
+void CacheTurretPositions()
+{
+    turretPositions.Clear();
+
+    for (int x = 1; x < width - 1; x++)
     {
-        turretPositions.Clear();
-
-        for (int x = 1; x < width - 1; x++)
-            for (int y = 1; y < height - 1; y++)
-            {
-                bool intersection = (!grid[x, y].wallN && !grid[x, y].wallS) ||
-                                    (!grid[x, y].wallE && !grid[x, y].wallW);
-
-                if (intersection)
-                    turretPositions.Add(new Vector3(x * cellSize, turretHeightOffset, y * cellSize));
-            }
-    }
-
-    void SpawnTurretAt(Vector3 pos)
-    {
-        GameObject prefab = difficulty switch
+        for (int y = 1; y < height - 1; y++)
         {
-            Difficulty.Easy => RandomFrom(easyTurrets),
-            Difficulty.Medium => RandomFrom(mediumTurrets),
-            Difficulty.Hard => RandomFrom(hardTurrets),
-            _ => RandomFrom(easyTurrets)
-        };
+            Cell c = grid[x, y];
 
-        if (prefab == null) return;
+            // Count open sides (no walls)
+            int openSides = 0;
+            if (!c.wallN) openSides++;
+            if (!c.wallS) openSides++;
+            if (!c.wallE) openSides++;
+            if (!c.wallW) openSides++;
 
-        GameObject turret = Instantiate(prefab, pos, Quaternion.identity);
-        activeTurrets[pos] = turret;
+            // Identify cell type
+            bool isDeadEnd = openSides == 1;
+            bool isCorner = (openSides == 2) && (
+                (!c.wallN && !c.wallE) ||
+                (!c.wallE && !c.wallS) ||
+                (!c.wallS && !c.wallW) ||
+                (!c.wallW && !c.wallN)
+            );
+            bool isIntersection = openSides >= 3;
+
+            // Strategic selection weights
+            float chance = 0f;
+            switch (difficulty)
+            {
+                case Difficulty.Easy:
+                    if (isDeadEnd) chance = 0.4f;
+                    if (isCorner) chance = 0.25f;
+                    if (isIntersection) chance = 0.1f;
+                    break;
+                case Difficulty.Medium:
+                    if (isDeadEnd) chance = 0.5f;
+                    if (isCorner) chance = 0.35f;
+                    if (isIntersection) chance = 0.25f;
+                    break;
+                case Difficulty.Hard:
+                    if (isDeadEnd) chance = 0.6f;
+                    if (isCorner) chance = 0.5f;
+                    if (isIntersection) chance = 0.4f;
+                    break;
+            }
+
+            // Random chance spawn
+            if (Random.value < chance)
+            {
+                Vector3 pos = new Vector3(x * cellSize, turretHeightOffset, y * cellSize);
+                turretPositions.Add(pos);
+            }
+        }
     }
 
+    Debug.Log($"🎯 Cached {turretPositions.Count} strategic turret positions.");
+}
+
+void SpawnTurretAt(Vector3 pos)
+{
+    GameObject prefab = difficulty switch
+    {
+        Difficulty.Easy => RandomFrom(easyTurrets),
+        Difficulty.Medium => RandomFrom(mediumTurrets),
+        Difficulty.Hard => RandomFrom(hardTurrets),
+        _ => RandomFrom(easyTurrets)
+    };
+
+    if (prefab == null) return;
+
+    // Rotate to face the nearest open path (optional but cool)
+    Quaternion faceDir = Quaternion.identity;
+    Vector2Int cellCoord = new Vector2Int(Mathf.RoundToInt(pos.x / cellSize), Mathf.RoundToInt(pos.z / cellSize));
+
+    if (cellCoord.x >= 0 && cellCoord.x < width && cellCoord.y >= 0 && cellCoord.y < height)
+    {
+        Cell c = grid[cellCoord.x, cellCoord.y];
+        if (!c.wallN) faceDir = Quaternion.Euler(0, 0, 0);
+        else if (!c.wallS) faceDir = Quaternion.Euler(0, 180, 0);
+        else if (!c.wallE) faceDir = Quaternion.Euler(0, 90, 0);
+        else if (!c.wallW) faceDir = Quaternion.Euler(0, -90, 0);
+    }
+
+    GameObject turret = Instantiate(prefab, pos, faceDir);
+    activeTurrets[pos] = turret;
+}
     GameObject RandomFrom(GameObject[] arr) =>
         (arr != null && arr.Length > 0) ? arr[rng.Next(arr.Length)] : null;
 }

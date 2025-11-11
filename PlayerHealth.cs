@@ -47,7 +47,8 @@ public class PlayerHealth : MonoBehaviour
         if (screenFlash != null) screenFlash.Flash(Color.red, 0.3f);
 
         // 💔 Update UI hearts
-        playerHealthUI?.OnPlayerHit();
+        playerHealthUI?.UpdateHealthUI(currentHealth, maxHealth);
+
 
         // 💢 Play stumble animation and sound
         if (currentHealth > 0)
