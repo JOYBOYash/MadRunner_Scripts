@@ -1,79 +1,116 @@
 using UnityEngine;
+using Unity.Netcode;
 using System.Collections;
 
 [RequireComponent(typeof(Camera))]
-public class SmoothCameraFollow : MonoBehaviour
+public class SmoothCameraFollow : NetworkBehaviour
 {
     [Header("Target Settings")]
-    public Transform target;                   // Player transform to follow
+    [Tooltip("Camera will automatically find the local player if left empty.")]
+    public Transform target;
 
     [Header("Follow Settings")]
-    public Vector3 followOffset = new Vector3(0f, 5f, -10f); // Camera position offset
-    public float followSmoothness = 5f;                      // Lerp speed for following
+    public Vector3 followOffset = new Vector3(0, 5, -10);
+    public float followSmoothness = 5f;
+
+     public GameObject gameObject;
 
     [Header("Zoom Settings")]
-    public float normalZoom = 7f;               // Default orthographic size
-    public float zoomedInSize = 5f;             // Zoom size during dash/slide
-    public float zoomSpeed = 3f;                // How fast the zoom transitions
+    public float normalZoom = 7f;
+    public float zoomedInSize = 5f;
+    public float zoomSpeed = 3f;
 
     [Header("Slow Motion Settings")]
-    public float slowMoScale = 0.4f;            // 0.4 = 40% of normal time
-    public float slowMoDuration = 0.5f;         // Duration in real-time seconds
+    public float slowMoScale = 0.4f;
+    public float slowMoDuration = 0.5f;
 
     private Camera cam;
-    private bool isZooming = false;
     private float targetZoom;
+    private bool isZooming = false;
+    private bool targetFound = false;
 
-    void Start()
+    void Awake()
     {
         cam = GetComponent<Camera>();
+        cam.orthographic = true;
+        targetZoom = normalZoom;
+    }
 
-        if (!cam.orthographic)
+    public override void OnNetworkSpawn()
+    {
+        // Only the OWNER gets the camera
+        if (!IsOwner)
         {
-            Debug.LogWarning("SmoothCameraFollow is optimized for Orthographic cameras!");
-            cam.orthographic = true;
+            gameObject.SetActive(false);
+            return;
         }
 
-        targetZoom = normalZoom;
-
+        // If target isn't set yet, search for local player
         if (target == null)
-            Debug.LogWarning("Camera has no target assigned! Please assign the player transform.");
+            StartCoroutine(FindLocalPlayerRoutine());
+    }
+
+    private IEnumerator FindLocalPlayerRoutine()
+    {
+        float timeout = 5f;
+        Debug.Log("🎥 Camera searching for local player...");
+
+        while (timeout > 0)
+        {
+            if (NetworkManager.Singleton.LocalClient != null &&
+                NetworkManager.Singleton.LocalClient.PlayerObject != null)
+            {
+                target = NetworkManager.Singleton.LocalClient.PlayerObject.transform;
+                targetFound = true;
+
+                Debug.Log("🎉 Camera successfully attached to LOCAL player.");
+                yield break;
+            }
+
+            timeout -= Time.deltaTime;
+            yield return null;
+        }
+
+        Debug.LogWarning("⚠️ Camera could not find local player!");
     }
 
     void LateUpdate()
     {
-        if (target == null) return;
+        if (!IsOwner || !targetFound || target == null)
+            return;
 
-        // FOLLOW PLAYER WITH OFFSET
-        Vector3 desiredPosition = target.position + followOffset;
-        Vector3 smoothedPosition = Vector3.Lerp(transform.position, desiredPosition, followSmoothness * Time.deltaTime);
-        transform.position = smoothedPosition;
+        // Smooth follow
+        Vector3 desiredPos = target.position + followOffset;
+        transform.position = Vector3.Lerp(transform.position, desiredPos, followSmoothness * Time.deltaTime);
 
-        // Maintain orthographic size smoothly
+        // Smooth zoom
         cam.orthographicSize = Mathf.Lerp(cam.orthographicSize, targetZoom, zoomSpeed * Time.deltaTime);
     }
 
-    // Public function to trigger Dash/Slide effects
+    // ---------------------------------------
+    // 🎬 Cinematic Dash / Slide Effect
+    // ---------------------------------------
     public void TriggerCinematicEffect()
     {
         if (!isZooming)
-            StartCoroutine(CinematicRoutine());
+            StartCoroutine(CinematicEffectRoutine());
     }
 
-    private IEnumerator CinematicRoutine()
+    private IEnumerator CinematicEffectRoutine()
     {
         isZooming = true;
 
-        // Step 1: Slow down time
         float originalTimeScale = Time.timeScale;
-        Time.timeScale = slowMoScale;
-        Time.fixedDeltaTime = 0.02f * Time.timeScale; // Fix physics delta
 
-        // Step 2: Zoom in
+        // Slow motion
+        Time.timeScale = slowMoScale;
+        Time.fixedDeltaTime = 0.02f * Time.timeScale;
+
+        // Zoom in
         targetZoom = zoomedInSize;
         yield return new WaitForSecondsRealtime(slowMoDuration);
 
-        // Step 3: Restore time and zoom out
+        // Restore
         Time.timeScale = originalTimeScale;
         Time.fixedDeltaTime = 0.02f;
         targetZoom = normalZoom;

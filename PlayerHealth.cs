@@ -1,38 +1,75 @@
 using UnityEngine;
 
+[RequireComponent(typeof(Rigidbody))]
 public class PlayerHealth : MonoBehaviour
 {
     [Header("Health Settings")]
     public int maxHealth = 3;
     private int currentHealth;
 
-    [Header("References")]
-    public ScoreDataSO scoreData;
-    public GameOverUIManager gameOverUIManager;
-    public PlayerController playerController;
-    public Animator animator;
-    public ScoreTracker scoreManager;
-    public AudioSource audioSource;
-    public AudioClip hitClip;
-    public PlayerHealthUI playerHealthUI;   // 🩸 UI Reference
-    public ScreenShake screenShake;         // 💥 Screen shake reference
-    public ScreenFlash screenFlash;         // ⚡ Screen flash reference
-
     private bool isDead = false;
     private Rigidbody rb;
 
-    // 🔥 Global flag accessible from anywhere
+    // 🔥 Global access
     public static bool IsPlayerDead { get; private set; } = false;
+
+    // 🧩 Dynamically linked references
+    private ScoreDataSO scoreData;
+    private GameOverUIManager gameOverUIManager;
+    private PlayerController playerController;
+    private Animator animator;
+    private ScoreTracker scoreManager;
+    private AudioSource audioSource;
+    private AudioClip hitClip;
+    private PlayerHealthUI playerHealthUI;
+    private ScreenShake screenShake;
+    private ScreenFlash screenFlash;
+
+    void Awake()
+    {
+        rb = GetComponent<Rigidbody>();
+        playerController = GetComponent<PlayerController>();
+        animator = GetComponentInChildren<Animator>();
+        scoreManager = FindFirstObjectByType<ScoreTracker>();
+
+        IsPlayerDead = false;
+    }
 
     void Start()
     {
-        currentHealth = maxHealth;
-        rb = GetComponent<Rigidbody>();
-        IsPlayerDead = false;
+        // ⚙️ When player spawns, auto-register with GameManager
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.RegisterPlayer(this);
+        }
+        else
+        {
+            Debug.LogWarning("⚠️ No GameManager found in scene. PlayerHealth will operate standalone.");
+        }
 
-        // Initialize UI
-        if (playerHealthUI != null)
-            playerHealthUI.ResetHealthUI();
+        currentHealth = maxHealth;
+
+        // Initialize UI if available
+        playerHealthUI?.ResetHealthUI();
+    }
+
+    // 🎯 This gets called by GameManager.RegisterPlayer()
+    public void AssignManagerReferences(
+        ScoreDataSO scoreData,
+        GameOverUIManager uiManager,
+        PlayerHealthUI healthUI,
+        ScreenShake shake,
+        ScreenFlash flash,
+        AudioSource source,
+        AudioClip clip)
+    {
+        this.scoreData = scoreData;
+        this.gameOverUIManager = uiManager;
+        this.playerHealthUI = healthUI;
+        this.screenShake = shake;
+        this.screenFlash = flash;
+        this.audioSource = source;
+        this.hitClip = clip;
     }
 
     public void TakeDamage(int damage)
@@ -42,29 +79,23 @@ public class PlayerHealth : MonoBehaviour
         currentHealth -= damage;
         if (currentHealth < 0) currentHealth = 0;
 
-        // 💢 Trigger effects
-        if (screenShake != null) screenShake.Shake(0.3f, 0.3f);
-        if (screenFlash != null) screenFlash.Flash(Color.red, 0.3f);
-
-        // 💔 Update UI hearts
+        // 💢 Feedback
+        screenShake?.Shake(0.3f, 0.3f);
+        screenFlash?.Flash(Color.red, 0.3f);
         playerHealthUI?.UpdateHealthUI(currentHealth, maxHealth);
 
-
-        // 💢 Play stumble animation and sound
         if (currentHealth > 0)
         {
-            animator.SetTrigger("Stumbles");
+            animator?.SetTrigger("Stumbles");
             audioSource?.PlayOneShot(hitClip);
-            Debug.Log($"🩸 Player hit! Current HP: {currentHealth}");
+            Debug.Log($"🩸 Player hit! HP: {currentHealth}");
         }
-
 
         if (rb != null)
         {
-            Vector3 knockDir = (rb.transform.position - transform.position).normalized;
+            Vector3 knockDir = -transform.forward; // or custom knockback
             rb.AddForce(knockDir * 5f, ForceMode.Impulse);
         }
-
 
         if (currentHealth <= 0)
             Die();
@@ -78,11 +109,9 @@ public class PlayerHealth : MonoBehaviour
         IsPlayerDead = true;
         Debug.Log("💀 Player has died!");
 
-        // Stop score updates and save final score
-        FindFirstObjectByType<ScoreTracker>()?.StopTracking();
-        scoreData.FinalizeScore();
+        scoreManager?.StopTracking();
+        scoreData?.FinalizeScore();
 
-        // Stop player movement and physics
         if (rb != null)
         {
             rb.linearVelocity = Vector3.zero;
@@ -90,28 +119,18 @@ public class PlayerHealth : MonoBehaviour
             rb.isKinematic = true;
         }
 
-        // ⚰️ Animator death state
-        animator.SetBool("isDead", true);
-        animator.ResetTrigger("Stumbles");
-        animator.ResetTrigger("Revives");
-        animator.SetTrigger("Dies");
+        animator?.SetBool("isDead", true);
+        animator?.ResetTrigger("Stumbles");
+        animator?.ResetTrigger("Revives");
+        animator?.SetTrigger("Dies");
 
-        // Disable controller and scoring
-        if (playerController != null)
-            playerController.enabled = false;
+        playerController.enabled = false;
+        scoreManager.enabled = false;
 
-        if (scoreManager != null)
-            scoreManager.enabled = false;
-
-        // Show game over
         gameOverUIManager?.ShowGameOver();
 
-        // Ensure time is normal
         if (Time.timeScale != 1)
-        {
-            Debug.LogWarning("⚠️ Resetting Time.timeScale to 1 because something paused the game.");
             Time.timeScale = 1f;
-        }
     }
 
     public void ResetHealth()
@@ -122,13 +141,12 @@ public class PlayerHealth : MonoBehaviour
 
         rb.isKinematic = false;
 
-        animator.SetBool("isDead", false);
-        animator.SetTrigger("Revives");
+        animator?.SetBool("isDead", false);
+        animator?.SetTrigger("Revives");
 
         playerController.enabled = true;
         scoreManager.enabled = true;
 
-        // 💖 Reset health UI
         playerHealthUI?.ResetHealthUI();
     }
 }

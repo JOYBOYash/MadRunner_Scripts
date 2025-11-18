@@ -13,6 +13,12 @@ public class SceneManagerController : MonoBehaviour
         SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }
 
+    public void LoadSceneByName(string sceneName)
+    {
+
+        SceneManager.LoadScene(sceneName);
+    }
+
     public void LoadMainMenu()
     {
         if (scoreData != null)

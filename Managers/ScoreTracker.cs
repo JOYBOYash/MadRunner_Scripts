@@ -4,6 +4,7 @@ using TMPro;
 public class ScoreTracker : MonoBehaviour
 {
     [Header("References")]
+    [Tooltip("Automatically found if not assigned.")]
     public Transform player;
     public TMP_Text scoreText;
     public ScoreDataSO scoreData;
@@ -14,6 +15,7 @@ public class ScoreTracker : MonoBehaviour
     public int milestoneStep = 1000;
     public float popScaleAmount = 1.3f;
     public float popSpeed = 8f;
+    public float playerSearchInterval = 1.0f; // How often to retry finding player
 
     private float startZ;
     private float lastMilestone = 0f;
@@ -22,36 +24,78 @@ public class ScoreTracker : MonoBehaviour
     private float displayedScore = 0f;
     private bool isTracking = true;
 
+    private float searchTimer = 0f;
+
     void Start()
     {
         if (!scoreText || !scoreData)
         {
-            Debug.LogError("❌ ScoreTracker: Missing references!");
+            Debug.LogError("❌ ScoreTracker: Missing essential references (ScoreText or ScoreDataSO)!");
             enabled = false;
             return;
         }
 
         scoreData.ResetScore();
-        scoreData.LoadHighScore(); // ✅ Ensure we have previous high score loaded
-        startZ = player.position.z;
+        scoreData.LoadHighScore();
+
         originalScale = scoreText.transform.localScale;
+
+        // Try finding the player immediately at startup
+        FindPlayer();
     }
 
     void Update()
     {
         if (!isTracking) return;
 
+        // 🔍 Auto-find player if missing (safe for respawns)
+        if (player == null)
+        {
+            searchTimer += Time.deltaTime;
+            if (searchTimer >= playerSearchInterval)
+            {
+                FindPlayer();
+                searchTimer = 0f;
+            }
+            return;
+        }
+
         UpdateDistance();
         SmoothDisplayScore();
     }
 
+    void FindPlayer()
+    {
+        GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
+
+        if (playerObj != null)
+        {
+            player = playerObj.transform;
+            startZ = player.position.z;
+            Debug.Log($"✅ ScoreTracker: Player found — tracking from Z = {startZ:F2}");
+        }
+        else
+        {
+            Debug.LogWarning("⚠️ ScoreTracker: Player not found yet. Will retry...");
+        }
+    }
+
     void UpdateDistance()
     {
-        float distanceTravelled = useZAxisOnly
-            ? (player.position.z - startZ)
-            : Vector3.Distance(new Vector3(player.position.x, 0, player.position.z), new Vector3(0, 0, startZ));
+        if (player == null) return;
+
+        float distanceTravelled;
+
+        if (useZAxisOnly)
+            distanceTravelled = player.position.z - startZ;
+        else
+            distanceTravelled = Vector3.Distance(
+                new Vector3(player.position.x, 0, player.position.z),
+                new Vector3(0, 0, startZ)
+            );
 
         distanceTravelled = Mathf.Max(0, distanceTravelled);
+
         scoreData.AddScore(Time.deltaTime * distanceTravelled * distanceMultiplier);
 
         float currentMilestone = Mathf.Floor(scoreData.currentScore / milestoneStep);
@@ -91,16 +135,25 @@ public class ScoreTracker : MonoBehaviour
     void TriggerPopEffect()
     {
         isPopping = true;
-        Debug.Log($"🎉 Milestone: {lastMilestone * milestoneStep} m");
+        Debug.Log($"🎉 Milestone reached: {lastMilestone * milestoneStep} m");
     }
 
-    // 🔥 Call this when player dies or game ends
+    // 🧩 External control — called when game over or player dies
     public void StopTracking()
     {
         if (!isTracking) return;
 
         isTracking = false;
-        scoreData.FinalizeScore(); // ✅ Save and check high score only once
+        scoreData.FinalizeScore();
         Debug.Log($"💀 Final Score: {Mathf.FloorToInt(scoreData.currentScore)}");
+    }
+
+    // 🧩 Called when new player spawns (from GameManager or PlayerHealth)
+    public void RegisterPlayer(Transform newPlayer)
+    {
+        player = newPlayer;
+        startZ = player.position.z;
+        isTracking = true;
+        Debug.Log($"🔄 ScoreTracker: New player registered at Z={startZ:F2}");
     }
 }

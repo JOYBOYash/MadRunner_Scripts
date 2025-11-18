@@ -1,7 +1,8 @@
 using UnityEngine;
+using Unity.Netcode;
 
 [RequireComponent(typeof(CharacterController))]
-public class PlayerController : MonoBehaviour
+public class PlayerController : NetworkBehaviour
 {
     [Header("References")]
     public PlayerInputHandler input;
@@ -10,7 +11,7 @@ public class PlayerController : MonoBehaviour
     public Transform cameraTransform;
     public PlayerAudioManager audioManager;
 
-    [Header("Movement Settings")]
+    [Header("Settings")]
     public bool useCameraRelativeMovement = true;
     public float inputDeadzone = 0.15f;
 
@@ -22,67 +23,97 @@ public class PlayerController : MonoBehaviour
     private CharacterController controller;
     private float currentSpeed;
     private Vector3 targetDirection;
-
     private bool isSpeedBoosted = false;
     private float boostTimer = 0f;
     private float targetSpeed;
 
-    void Start()
+    // 🧠 Networked variables for position & rotation sync
+    private NetworkVariable<Vector3> networkPosition = new(writePerm: NetworkVariableWritePermission.Owner);
+    private NetworkVariable<Quaternion> networkRotation = new(writePerm: NetworkVariableWritePermission.Owner);
+
+    // Smooth interpolation for remote clients
+    private Vector3 lastReceivedPos;
+    private Quaternion lastReceivedRot;
+    private float lerpSpeed = 10f;
+
+    public override void OnNetworkSpawn()
     {
         controller = GetComponent<CharacterController>();
-
-        if (config == null)
-        {
-            Debug.LogError("❌ PlayerMovementConfig not assigned!");
-            enabled = false;
-            return;
-        }
-
-        if (cameraTransform == null && Camera.main != null)
-            cameraTransform = Camera.main.transform;
+        // if (cameraTransform == null && Camera.main != null)
+        //     cameraTransform = Camera.main.transform;
 
         if (audioManager == null)
             audioManager = GetComponent<PlayerAudioManager>();
 
         currentSpeed = config.baseSpeed;
         targetSpeed = currentSpeed;
+
+        // Disable input for non-owners
+        if (!IsOwner)
+        {
+            if (input != null)
+                input.enabled = false;
+        }
+
+        // Set color or tag for clarity
+        name = IsOwner ? "LocalPlayer" : $"RemotePlayer_{OwnerClientId}";
     }
 
     void Update()
     {
-        // 🧠 Stop all logic if player is dead
-        if (PlayerHealth.IsPlayerDead)
-        {
-            animatorController?.animator?.SetFloat("Speed", 0f);
-            audioManager?.SetRunningState(false);
+        if (!IsSpawned)
             return;
-        }
 
+        if (IsOwner)
+        {
+            // Only owner handles movement logic
+            if (PlayerHealth.IsPlayerDead)
+            {
+                animatorController?.animator?.SetFloat("Speed", 0f);
+                audioManager?.SetRunningState(false);
+                return;
+            }
+
+            HandleMovementAndRotation();
+            HandleActions();
+            UpdateSpeedBoost();
+
+            // Sync position & rotation across network
+            networkPosition.Value = transform.position;
+            networkRotation.Value = transform.rotation;
+        }
+        else
+        {
+            // Smoothly interpolate non-owner positions
+            InterpolateRemotePlayer();
+        }
+    }
+
+    // 🧭 Smooth interpolation for other clients
+    private void InterpolateRemotePlayer()
+    {
+        transform.position = Vector3.Lerp(transform.position, networkPosition.Value, Time.deltaTime * lerpSpeed);
+        transform.rotation = Quaternion.Slerp(transform.rotation, networkRotation.Value, Time.deltaTime * lerpSpeed);
+    }
+
+    // 🏃 Movement + rotation for local player
+    void HandleMovementAndRotation()
+    {
         if (input == null)
         {
             Debug.LogWarning("⚠ No PlayerInputHandler assigned!");
             return;
         }
 
-        HandleMovementAndRotation();
-        HandleActions();
-        UpdateSpeedBoost();
-    }
-
-    // 🏃 Movement + rotation
-    void HandleMovementAndRotation()
-    {
         Vector2 moveInput = input.moveInput;
-
         if (moveInput.magnitude < inputDeadzone)
             moveInput = Vector2.zero;
 
-        // Camera-relative direction
+        // Camera-relative movement
         if (useCameraRelativeMovement && cameraTransform != null)
         {
             Vector3 camForward = cameraTransform.forward;
             Vector3 camRight = cameraTransform.right;
-
             camForward.y = 0f;
             camRight.y = 0f;
             camForward.Normalize();
@@ -103,19 +134,19 @@ public class PlayerController : MonoBehaviour
         }
 
         // Move
-        Vector3 forwardMove = transform.forward * currentSpeed;
+        Vector3 move = targetDirection * currentSpeed * Time.deltaTime;
         if (!controller.isGrounded)
-            forwardMove.y -= config.gravity * Time.deltaTime;
+            move.y -= config.gravity * Time.deltaTime;
 
-        controller.Move(forwardMove * Time.deltaTime);
+        controller.Move(move);
 
-        // Animation + footstep control
+        // Update animation and sound
         bool isMoving = controller.velocity.magnitude > 0.1f && controller.isGrounded;
         animatorController?.animator?.SetFloat("Speed", controller.velocity.magnitude);
         audioManager?.SetRunningState(isMoving);
     }
 
-    // 🎮 Dash + Slide
+    // 🎮 Dash + Slide actions
     void HandleActions()
     {
         if (input.dashPressed)
@@ -137,7 +168,7 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    // 🚀 Speed Boost Logic
+    // ⚡ Speed Boost Logic
     void TriggerSpeedBoost(float multiplier)
     {
         targetSpeed = config.baseSpeed * multiplier;
