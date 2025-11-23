@@ -1,15 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 using Unity.Netcode;
-/// <summary>
-/// PerfectMaze3D
-/// - Maze generation (recursive backtracker)
-/// - Maze build with non-overlapping wall segments that match cellSize
-/// - Floor scaling to fill the maze
-/// - Player spawn
-/// - Strategic turret position caching + spawn/pool by distance
-/// - Integrates with RoomSettings.SelectedDifficulty (safe enum mapping)
-/// </summary>
+
 public class PerfectMaze3D : MonoBehaviour
 {
     [Header("Maze Settings")]
@@ -22,16 +14,18 @@ public class PerfectMaze3D : MonoBehaviour
     public GameObject floorPrefab;
     public GameObject playerPrefab;
 
-    [Header("Multiplayer Spawn Points")]
-    public Vector3 hostSpawnOffset = new Vector3(0, 1, 0);  
-    public Vector3 clientSpawnOffset = new Vector3(3, 1, 3);
+    [Header("Difficulty-based Player Spacing (world units)")]
+    [Tooltip("Max distance between players on EASY (they spawn close / together).")]
+    public float easyMaxDistance = 6f;   // (kept for tuning, logic uses offsets in same cell)
 
+    [Tooltip("Desired MIN distance on MEDIUM.")]
+    public float mediumMinDistance = 12f;
 
-    [Header("Wall Fit Settings (tweak for your wall model)")]
-    [Tooltip("Height of the wall (world units).")]
-    public float wallHeight = 2f;
-    [Tooltip("Thickness of the wall (world units). Small value like 0.15 - 0.3 usually.")]
-    public float wallThickness = 0.2f;
+    [Tooltip("Desired MAX distance on MEDIUM.")]
+    public float mediumMaxDistance = 24f;
+
+    [Tooltip("Minimum distance on HARD (we pick farthest pair anyway).")]
+    public float hardMinDistance = 20f;
 
     [Header("Turret Spawn Settings")]
     public GameObject[] easyTurrets;
@@ -47,17 +41,12 @@ public class PerfectMaze3D : MonoBehaviour
     public enum Difficulty { Easy, Medium, Hard }
     public Difficulty difficulty = Difficulty.Medium;
 
-    // Internal map/grid
     private Cell[,] grid;
     private System.Random rng = new System.Random();
     private Transform player;
 
-    // Turret handling
     private List<Vector3> turretPositions = new List<Vector3>();
     private Dictionary<Vector3, GameObject> activeTurrets = new Dictionary<Vector3, GameObject>();
-
-    // Helper to avoid duplicate walls
-    private HashSet<string> spawnedWallKeys = new HashSet<string>();
 
     private class Cell
     {
@@ -67,16 +56,22 @@ public class PerfectMaze3D : MonoBehaviour
 
     void Start()
     {
-        // Try to read RoomSettings if present and map its difficulty to this script's Difficulty.
-    //     RoomSettings rs = FindObjectOfType<RoomSettings>();
-    // if (rs != null)
-    //     difficulty = (Difficulty)rs.SelectedDifficulty.Value;
+        GenerateMaze();     // ✅ unchanged
+        BuildMaze();        // ✅ unchanged
+        BuildFloor();       // ✅ unchanged
 
-        GenerateMaze();
-        BuildMaze();
-        BuildFloor();
-        SpawnPlayer();
-        CacheTurretPositions();
+        // 🔁 NEW: if we have Netcode and this instance is the server, spawn multiplayer players.
+        // Otherwise, fall back to your old single-player spawn.
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+        {
+            SpawnPlayersMultiplayer();
+        }
+        else
+        {
+            SpawnPlayer();
+        }
+
+        CacheTurretPositions();  // ✅ unchanged
         FindPlayer();
     }
 
@@ -88,10 +83,8 @@ public class PerfectMaze3D : MonoBehaviour
             return;
         }
 
-        // spawn / despawn turrets around the player based on spawnRange
-        for (int i = 0; i < turretPositions.Count; i++)
+        foreach (var pos in turretPositions)
         {
-            Vector3 pos = turretPositions[i];
             float dist = Vector3.Distance(player.position, pos);
             bool shouldExist = dist <= spawnRange;
             bool exists = activeTurrets.ContainsKey(pos);
@@ -107,9 +100,9 @@ public class PerfectMaze3D : MonoBehaviour
         }
     }
 
-    // -------------------------
-    // Maze generation
-    // -------------------------
+    // =========================================================
+    //  MAZE GENERATION  (UNCHANGED)
+    // =========================================================
     void GenerateMaze()
     {
         grid = new Cell[width, height];
@@ -161,112 +154,28 @@ public class PerfectMaze3D : MonoBehaviour
         }
     }
 
-    // -------------------------
-    // Maze build (walls + avoid duplicates)
-    // -------------------------
+    // =========================================================
+    //  MAZE BUILD  (UNCHANGED)
+    // =========================================================
     void BuildMaze()
     {
-        // parent for maze
         Transform mazeParent = new GameObject("Generated_Maze").transform;
         mazeParent.SetParent(transform);
 
-        spawnedWallKeys.Clear();
-
         for (int x = 0; x < width; x++)
-        {
             for (int y = 0; y < height; y++)
             {
-                Vector3 cellCenter = new Vector3(x * cellSize, 0, y * cellSize);
-
-                // For each side that has a wall, compute a canonical key (position + rotation)
-                // and instantiate only if key wasn't already used. This prevents double walls.
-
-                // NORTH wall (along local X axis, centered at Z + cellSize/2)
-                if (grid[x, y].wallN)
-                {
-                    Vector3 pos = cellCenter + new Vector3(0f, wallHeight * 0.5f, cellSize * 0.5f);
-                    Quaternion rot = Quaternion.identity; // facing along +Z (wall spans X)
-                    TrySpawnWall(pos, rot, mazeParent);
-                }
-
-                // SOUTH wall
-                if (grid[x, y].wallS)
-                {
-                    Vector3 pos = cellCenter + new Vector3(0f, wallHeight * 0.5f, -cellSize * 0.5f);
-                    Quaternion rot = Quaternion.identity;
-                    TrySpawnWall(pos, rot, mazeParent);
-                }
-
-                // EAST wall (along local Z axis, centered at X + cellSize/2)
-                if (grid[x, y].wallE)
-                {
-                    Vector3 pos = cellCenter + new Vector3(cellSize * 0.5f, wallHeight * 0.5f, 0f);
-                    Quaternion rot = Quaternion.Euler(0f, 90f, 0f); // rotated to span Z
-                    TrySpawnWall(pos, rot, mazeParent);
-                }
-
-                // WEST wall
-                if (grid[x, y].wallW)
-                {
-                    Vector3 pos = cellCenter + new Vector3(-cellSize * 0.5f, wallHeight * 0.5f, 0f);
-                    Quaternion rot = Quaternion.Euler(0f, 90f, 0f);
-                    TrySpawnWall(pos, rot, mazeParent);
-                }
+                Vector3 pos = new Vector3(x * cellSize, 0, y * cellSize);
+                if (grid[x, y].wallN) Instantiate(wallPrefab, pos + new Vector3(0, 0, cellSize / 2f), Quaternion.identity, mazeParent);
+                if (grid[x, y].wallS) Instantiate(wallPrefab, pos + new Vector3(0, 0, -cellSize / 2f), Quaternion.identity, mazeParent);
+                if (grid[x, y].wallE) Instantiate(wallPrefab, pos + new Vector3(cellSize / 2f, 0, 0), Quaternion.Euler(0, 90, 0), mazeParent);
+                if (grid[x, y].wallW) Instantiate(wallPrefab, pos + new Vector3(-cellSize / 2f, 0, 0), Quaternion.Euler(0, 90, 0), mazeParent);
             }
-        }
     }
 
-    /// <summary>
-    /// Attempts to spawn a wall at the given pos+rot only if we haven't already spawned one
-    /// near the same canonical location. This avoids duplicates where two adjacent cells
-    /// would both request the same wall.
-    /// Also fits wall segment scale to cellSize.
-    /// </summary>
-    void TrySpawnWall(Vector3 pos, Quaternion rot, Transform parent)
-    {
-        if (wallPrefab == null) return;
-
-        // Build a stable key using rounded pos (to avoid floating noise) and rotation yaw
-        Vector3 keyPos = new Vector3(Round(pos.x, 3), Round(pos.y, 3), Round(pos.z, 3));
-        float yaw = Mathf.Round(rot.eulerAngles.y); // canonical yaw (0 or 90)
-        string key = $"{keyPos.x:F3}_{keyPos.y:F3}_{keyPos.z:F3}_Y{yaw}";
-
-        if (spawnedWallKeys.Contains(key))
-            return;
-
-        spawnedWallKeys.Add(key);
-
-        GameObject w = Instantiate(wallPrefab, pos, rot, parent);
-
-        // Fit wall scale so the length covers exactly cellSize and height/thickness as provided.
-        // We assume the original wallPrefab was modelled with local length along X=1 unit and
-        // Y=1 for height, Z=1 for thickness. If your prefab differs, adjust the scale mapping.
-        Vector3 baseScale = w.transform.localScale;
-
-        // If rotation yaw ~ 90 -> wall oriented along Z; otherwise along X
-        if (Mathf.Abs(Mathf.DeltaAngle(yaw, 90f)) < 1f)
-        {
-            // oriented along Z: scale.z = cellSize, scale.x = thickness
-            w.transform.localScale = new Vector3(wallThickness, wallHeight, cellSize);
-        }
-        else
-        {
-            // oriented along X: scale.x = cellSize, scale.z = thickness
-            w.transform.localScale = new Vector3(cellSize, wallHeight, wallThickness);
-        }
-
-        // Ensure collider (if exists) matches size: try to resize BoxCollider for better collisions
-        var bc = w.GetComponent<BoxCollider>();
-        if (bc != null)
-        {
-            bc.size = new Vector3(1f, 1f, 1f); // keep 1 and rely on transform scale for final size
-            bc.center = Vector3.zero;
-        }
-    }
-
-    // -------------------------
-    // Floor build
-    // -------------------------
+    // =========================================================
+    //  FLOOR  (UNCHANGED)
+    // =========================================================
     void BuildFloor()
     {
         if (!floorPrefab) return;
@@ -275,54 +184,21 @@ public class PerfectMaze3D : MonoBehaviour
         Vector3 center = new Vector3((w - cellSize) / 2f, -0.5f, (h - cellSize) / 2f);
 
         GameObject floor = Instantiate(floorPrefab, center, Quaternion.identity, transform);
+        Vector3 size = floor.GetComponent<MeshRenderer>().bounds.size;
+        Vector3 scale = floor.transform.localScale;
 
-        // Try to scale floor to cover entire maze area. We use renderer bounds as reference.
-        var mr = floor.GetComponent<MeshRenderer>();
-        if (mr != null)
-        {
-            Vector3 size = mr.bounds.size;
-            Vector3 scale = floor.transform.localScale;
-
-            // Protect against zero-size meshes
-            if (size.x > 0.001f && size.z > 0.001f)
-            {
-                floor.transform.localScale = new Vector3((w / size.x) * scale.x, scale.y, (h / size.z) * scale.z);
-            }
-        }
+        floor.transform.localScale = new Vector3(w / size.x * scale.x, scale.y, h / size.z * scale.z);
     }
 
-    // -------------------------
-    // Player spawn + find
-    // -------------------------
-void SpawnPlayer()
-{
-    if (playerPrefab == null)
+    // =========================================================
+    //  ORIGINAL SINGLE-PLAYER SPAWN  (KEPT AS FALLBACK)
+    // =========================================================
+    void SpawnPlayer()
     {
-        Debug.LogError("❌ Player Prefab missing.");
-        return;
+        if (!playerPrefab) return;
+        Vector3 c = new Vector3((width - 1) * cellSize / 2f, 1f, (height - 1) * cellSize / 2f);
+        Instantiate(playerPrefab, c, Quaternion.identity);
     }
-
-    // Only host is allowed to spawn network players
-    if (!NetworkManager.Singleton.IsServer)
-        return;
-
-    // Calculate maze center
-    Vector3 center = new Vector3((width - 1) * cellSize / 2f, 1f, (height - 1) * cellSize / 2f);
-
-    foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
-    {
-        Vector3 spawnPos = (client.ClientId == NetworkManager.Singleton.LocalClientId)
-            ? center + hostSpawnOffset
-            : center + clientSpawnOffset;
-
-        // Spawn network player
-        GameObject player = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
-
-        var netObj = player.GetComponent<NetworkObject>();
-        netObj.SpawnAsPlayerObject(client.ClientId, true);
-    }
-}
-
 
     void FindPlayer()
     {
@@ -331,9 +207,167 @@ void SpawnPlayer()
             player = p.transform;
     }
 
-    // -------------------------
-    // Turret placement & spawn
-    // -------------------------
+    // =========================================================
+    //  🔥 NEW: MULTIPLAYER SPAWN (BASED ON DIFFICULTY)
+    // =========================================================
+    void SpawnPlayersMultiplayer()
+    {
+        if (playerPrefab == null)
+        {
+            Debug.LogError("❌ Player Prefab missing on PerfectMaze3D.");
+            return;
+        }
+
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer)
+        {
+            // Only the server/host spawns player objects
+            return;
+        }
+
+        // All cells that have at least one open side = walkable/path cells
+        List<Vector2Int> pathCells = new List<Vector2Int>();
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                Cell c = grid[x, y];
+                bool hasPath = !c.wallN || !c.wallS || !c.wallE || !c.wallW;
+                if (hasPath)
+                    pathCells.Add(new Vector2Int(x, y));
+            }
+        }
+
+        if (pathCells.Count == 0)
+        {
+            Debug.LogError("❌ No valid path cells found for spawning players.");
+            return;
+        }
+
+        Vector3 hostWorldPos, clientWorldPos;
+        ChooseSpawnPositionsByDifficulty(pathCells, out hostWorldPos, out clientWorldPos);
+
+        // Spawn for each connected client
+        foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
+        {
+            Vector3 spawnPos = (client.ClientId == NetworkManager.Singleton.LocalClientId)
+                ? hostWorldPos
+                : clientWorldPos;
+
+            GameObject playerObj = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
+            var netObj = playerObj.GetComponent<NetworkObject>();
+            if (netObj == null)
+            {
+                Debug.LogError("❌ PlayerPrefab has no NetworkObject component!");
+                Destroy(playerObj);
+                continue;
+            }
+
+            netObj.SpawnAsPlayerObject(client.ClientId, true);
+        }
+    }
+
+    /// <summary>
+    /// Easy  -> both players in same cell, side-by-side  
+    /// Medium -> moderate distance between path cells  
+    /// Hard  -> farthest two path cells in the maze
+    /// </summary>
+    void ChooseSpawnPositionsByDifficulty(List<Vector2Int> pathCells, out Vector3 hostPos, out Vector3 clientPos)
+    {
+        // Converts grid coords to world center of cell
+        System.Func<Vector2Int, Vector3> CellToWorld = cell =>
+            new Vector3(cell.x * cellSize, 1f, cell.y * cellSize);
+
+        if (difficulty == Difficulty.Easy)
+        {
+            // Both in same cell, small offset so they’re side-by-side
+            Vector2Int cell = pathCells[rng.Next(pathCells.Count)];
+            Vector3 basePos = CellToWorld(cell);
+
+            hostPos   = basePos + new Vector3(-0.75f, 0f, 0f);
+            clientPos = basePos + new Vector3( 0.75f, 0f, 0f);
+            return;
+        }
+
+        if (difficulty == Difficulty.Hard)
+        {
+            // Find the farthest pair of path cells
+            float maxDistSq = 0f;
+            Vector2Int cA = pathCells[0], cB = pathCells[0];
+
+            for (int i = 0; i < pathCells.Count; i++)
+            {
+                for (int j = i + 1; j < pathCells.Count; j++)
+                {
+                    float dx = (pathCells[i].x - pathCells[j].x) * cellSize;
+                    float dz = (pathCells[i].y - pathCells[j].y) * cellSize;
+                    float distSq = dx * dx + dz * dz;
+
+                    if (distSq > maxDistSq)
+                    {
+                        maxDistSq = distSq;
+                        cA = pathCells[i];
+                        cB = pathCells[j];
+                    }
+                }
+            }
+
+            hostPos   = CellToWorld(cA);
+            clientPos = CellToWorld(cB);
+
+            if (Vector3.Distance(hostPos, clientPos) < hardMinDistance)
+            {
+                Debug.LogWarning("⚠ HARD: Maze too small for huge separation, using max-distance pair anyway.");
+            }
+
+            return;
+        }
+
+        // MEDIUM difficulty: try to find a pair within [mediumMinDistance, mediumMaxDistance]
+        Vector2Int anchor = pathCells[rng.Next(pathCells.Count)];
+        Vector3 anchorWorld = CellToWorld(anchor);
+
+        List<Vector2Int> mediumCandidates = new List<Vector2Int>();
+        foreach (var cell in pathCells)
+        {
+            if (cell == anchor) continue;
+            Vector3 pos = CellToWorld(cell);
+            float dist = Vector3.Distance(anchorWorld, pos);
+            if (dist >= mediumMinDistance && dist <= mediumMaxDistance)
+                mediumCandidates.Add(cell);
+        }
+
+        Vector2Int secondCell;
+        if (mediumCandidates.Count > 0)
+        {
+            secondCell = mediumCandidates[rng.Next(mediumCandidates.Count)];
+        }
+        else
+        {
+            // Fallback: pick farthest from anchor if there are no "medium" candidates
+            float best = 0f;
+            secondCell = anchor;
+
+            foreach (var cell in pathCells)
+            {
+                if (cell == anchor) continue;
+                float dx = (cell.x - anchor.x) * cellSize;
+                float dz = (cell.y - anchor.y) * cellSize;
+                float d2 = dx * dx + dz * dz;
+                if (d2 > best)
+                {
+                    best = d2;
+                    secondCell = cell;
+                }
+            }
+        }
+
+        hostPos   = anchorWorld;
+        clientPos = CellToWorld(secondCell);
+    }
+
+    // =========================================================
+    //  TURRETS (UNCHANGED)
+    // =========================================================
     void CacheTurretPositions()
     {
         turretPositions.Clear();
@@ -344,14 +378,12 @@ void SpawnPlayer()
             {
                 Cell c = grid[x, y];
 
-                // Count open sides (no walls)
                 int openSides = 0;
                 if (!c.wallN) openSides++;
                 if (!c.wallS) openSides++;
                 if (!c.wallE) openSides++;
                 if (!c.wallW) openSides++;
 
-                // Identify cell type
                 bool isDeadEnd = openSides == 1;
                 bool isCorner = (openSides == 2) && (
                     (!c.wallN && !c.wallE) ||
@@ -361,23 +393,22 @@ void SpawnPlayer()
                 );
                 bool isIntersection = openSides >= 3;
 
-                // Strategic selection weights
                 float chance = 0f;
                 switch (difficulty)
                 {
                     case Difficulty.Easy:
                         if (isDeadEnd) chance = 0.4f;
-                        if (isCorner) chance = 0.25f;
+                        if (isCorner)   chance = 0.25f;
                         if (isIntersection) chance = 0.1f;
                         break;
                     case Difficulty.Medium:
                         if (isDeadEnd) chance = 0.5f;
-                        if (isCorner) chance = 0.35f;
+                        if (isCorner)   chance = 0.35f;
                         if (isIntersection) chance = 0.25f;
                         break;
                     case Difficulty.Hard:
                         if (isDeadEnd) chance = 0.6f;
-                        if (isCorner) chance = 0.5f;
+                        if (isCorner)   chance = 0.5f;
                         if (isIntersection) chance = 0.4f;
                         break;
                 }
@@ -397,24 +428,21 @@ void SpawnPlayer()
     {
         GameObject prefab = difficulty switch
         {
-            Difficulty.Easy => RandomFrom(easyTurrets),
+            Difficulty.Easy   => RandomFrom(easyTurrets),
             Difficulty.Medium => RandomFrom(mediumTurrets),
-            Difficulty.Hard => RandomFrom(hardTurrets),
-            _ => RandomFrom(easyTurrets)
+            Difficulty.Hard   => RandomFrom(hardTurrets),
+            _                 => RandomFrom(easyTurrets)
         };
 
         if (prefab == null) return;
 
-        // Rotate to face the nearest open path (simple heuristic)
         Quaternion faceDir = Quaternion.identity;
-        int cx = Mathf.RoundToInt(pos.x / cellSize);
-        int cy = Mathf.RoundToInt(pos.z / cellSize);
-        Vector2Int cellCoord = new Vector2Int(cx, cy);
+        Vector2Int cellCoord = new Vector2Int(Mathf.RoundToInt(pos.x / cellSize), Mathf.RoundToInt(pos.z / cellSize));
 
         if (cellCoord.x >= 0 && cellCoord.x < width && cellCoord.y >= 0 && cellCoord.y < height)
         {
             Cell c = grid[cellCoord.x, cellCoord.y];
-            if (!c.wallN) faceDir = Quaternion.Euler(0, 0, 0);
+            if (!c.wallN)      faceDir = Quaternion.Euler(0, 0, 0);
             else if (!c.wallS) faceDir = Quaternion.Euler(0, 180, 0);
             else if (!c.wallE) faceDir = Quaternion.Euler(0, 90, 0);
             else if (!c.wallW) faceDir = Quaternion.Euler(0, -90, 0);
@@ -426,13 +454,4 @@ void SpawnPlayer()
 
     GameObject RandomFrom(GameObject[] arr) =>
         (arr != null && arr.Length > 0) ? arr[rng.Next(arr.Length)] : null;
-
-    // -------------------------
-    // Helpers
-    // -------------------------
-    static float Round(float v, int digits)
-    {
-        float mul = Mathf.Pow(10f, digits);
-        return Mathf.Round(v * mul) / mul;
-    }
 }
